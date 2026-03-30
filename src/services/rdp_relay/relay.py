@@ -100,9 +100,8 @@ async def relay_bidirectional(
             )
         ),
     ]
-    await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
 
-    # One closed leg means session should terminate; force-close both transports.
     abort_writer(client_writer)
     abort_writer(backend_writer)
     results = await asyncio.gather(*tasks, return_exceptions=True)

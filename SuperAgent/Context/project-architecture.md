@@ -132,18 +132,24 @@ RDP Relay ─────────────────────► Tar
 - `main.py`: TCP listener и graceful shutdown.
 - `handler.py`: полный lifecycle одной RDP-сессии:
   - optional PPv2 read
-  - token extraction
+  - token extraction + `extract_requested_protocols` из X.224 CR клиента
   - X.224 confirm
   - TLS upgrade
-  - CredSSP backend auth
+  - CredSSP backend auth (всегда запрашивает `PROTOCOL_HYBRID` 0x03 у backend)
   - bidirectional relay
-- `relay.py`: двунаправленная передача данных.
+  - `client_requested_protocols` из X.224 CR сохраняется в `SessionContext.extra` и пробрасывается в плагины для корректного патча MCS-ответа.
+- `relay.py`: двунаправленная передача данных; логика остановки — `FIRST_COMPLETED` (если одна нога закрылась, принудительно закрываются обе стороны).
 - `tcp_utils.py`: keepalive/abort helpers.
-- `relay.py`: логика остановки изменена на `FIRST_COMPLETED` (если одна нога закрылась, принудительно закрываются обе стороны и сессия корректно финализируется).
 - `plugins/base.py`: контракт плагинов.
 - `plugins/registry.py`: chain dispatcher.
-- `plugins/mcs_patch.py`: MCS patch plugin.
+- `plugins/mcs_patch.py`: MCS patch plugin; считывает `client_requested_protocols` из `ctx.extra` и передаёт в `patch_mcs_server`, чтобы поле `clientRequestedProtocols` в SC_CORE ответе бэкенда соответствовало оригинальному запросу клиента (важно для iPhone / Windows App, которые проверяют точное совпадение).
 - `plugins/session_monitor.py`: session activity/idle monitor.
+
+##### Libs: `rdp/x224.py`
+- `extract_requested_protocols(x224_payload: bytes) -> int` — извлекает `requestedProtocols` из RDP Negotiation Request (последние 4 байта X.224 CR). Используется в `handler.py`.
+
+##### Libs: `rdp/mcs.py`
+- `patch_mcs_server(data, *, client_requested_protocols=None)` — патчит `clientRequestedProtocols` в SC_CORE ответе сервера. Если `client_requested_protocols` передан — ставит его значение, иначе fallback на `PROTOCOL_SSL`.
 
 #### Metrics (`services/metrics`)
 - `collector.py`: psutil snapshot -> Redis latest/series + PostgreSQL heartbeat upsert.

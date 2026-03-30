@@ -26,5 +26,6 @@ class McsPatchPlugin(RdpPlugin):
     async def on_backend_packet(self, data: bytes, ctx: SessionContext) -> bytes:
         if self._backend_first:
             self._backend_first = False
-            return patch_mcs_server(data)
+            crp = ctx.extra.get("client_requested_protocols")
+            return patch_mcs_server(data, client_requested_protocols=crp)
         return data

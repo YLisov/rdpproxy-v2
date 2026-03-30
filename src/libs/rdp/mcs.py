@@ -51,8 +51,8 @@ def patch_mcs_client(data: bytes) -> bytes:
     return bytes(packet)
 
 
-def patch_mcs_server(data: bytes) -> bytes:
-    """Patch server GCC SC_CORE.clientRequestedProtocols for client tamper checks."""
+def patch_mcs_server(data: bytes, *, client_requested_protocols: int | None = None) -> bytes:
+    """Patch server GCC SC_CORE.clientRequestedProtocols to match the original client value."""
     packet = bytearray(data)
     for i in range(len(packet) - 3):
         block_type = struct.unpack_from("<H", packet, i)[0]
@@ -63,9 +63,10 @@ def patch_mcs_server(data: bytes) -> bytes:
             continue
         off = i + 8
         current = struct.unpack_from("<I", packet, off)[0]
-        if current != PROTOCOL_SSL:
-            struct.pack_into("<I", packet, off, PROTOCOL_SSL)
-            logger.info("Patched MCS server clientRequestedProtocols 0x%08x->0x%08x at byte %d", current, PROTOCOL_SSL, off)
+        target = client_requested_protocols if client_requested_protocols is not None else PROTOCOL_SSL
+        if current != target:
+            struct.pack_into("<I", packet, off, target)
+            logger.info("Patched MCS server clientRequestedProtocols 0x%08x->0x%08x at byte %d", current, target, off)
         return bytes(packet)
     logger.info("MCS server patch not applied (TS_UD_SC_CORE not found)")
     return bytes(packet)

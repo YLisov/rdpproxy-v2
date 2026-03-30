@@ -64,6 +64,14 @@ def extract_rdp_client_hint(x224_payload: bytes) -> str:
     return ""
 
 
+def extract_requested_protocols(x224_payload: bytes) -> int:
+    """Extract requestedProtocols from the RDP Negotiation Request in X.224 CR."""
+    marker = x224_payload.find(b"\x01\x00\x08\x00")
+    if marker != -1 and marker + 8 <= len(x224_payload):
+        return struct.unpack_from("<I", x224_payload, marker + 4)[0]
+    return REQUESTED_PROTOCOLS_HYBRID
+
+
 def build_rdp_client_fingerprint(x224_payload: bytes, token: str) -> str:
     hint = extract_rdp_client_hint(x224_payload)
     token_bytes = token.encode("utf-8")

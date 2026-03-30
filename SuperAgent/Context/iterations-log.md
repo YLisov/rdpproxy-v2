@@ -479,3 +479,35 @@ curl -k -I https://127.0.0.1:8443/
 
 ### Действие 17.2
 Обновлены `SuperAgent/Context/project-architecture.md` и `SuperAgent/Context/iterations-log.md` после правки центрирования.
+
+---
+
+## Итерация #18
+**Дата**: 2026-03-30
+**Запрос**: RDP подключение не устанавливается с iPhone через приложение Windows App (ошибка 0x609).
+
+### Действие 18.1
+Добавлена runtime-инструментация в `handler.py`, `relay.py`, `mcs.py` для диагностики RDP lifecycle (NDJSON логирование в `/opt/rdpproxy-v2/.cursor/debug-b0044f.log`).
+
+### Действие 18.2
+Добавлен debug volume `./.cursor:/opt/rdpproxy-v2/.cursor` в `docker-compose.yml` для `rdp-relay`, чтобы логи были доступны с хоста.
+
+### Действие 18.3
+**Первый прогон**: iPhone (requestedProtocols=0x0B) подключился, прошёл TLS+CredSSP, но после MCS exchange сразу отключился (EOF после ~1 секунды). Причина: `patch_mcs_server` ставил `clientRequestedProtocols = PROTOCOL_SSL` (0x01) вместо оригинальных 0x0B клиента. iPhone строго проверяет это поле и отключается при несовпадении.
+
+### Действие 18.4
+**Первая попытка фикса (отклонена)**: передача requestedProtocols=0x0B напрямую в `connect_and_authenticate` для бэкенда. Это вызвало "Early User Authorization Result" (HYBRID_EX), которое сломало CredSSP-парсер. Backend сбросил соединение.
+
+### Действие 18.5
+**Корректный фикс**:
+1. В `handler.py` добавлена функция `extract_requested_protocols()` из `rdp/x224.py` для извлечения оригинального `requestedProtocols` из X.224 CR клиента.
+2. Значение сохраняется в `SessionContext.extra["client_requested_protocols"]`.
+3. `credssp.py` — оставлен без изменений (бэкенд всегда получает `PROTOCOL_HYBRID` 0x03).
+4. `plugins/mcs_patch.py` — передаёт `client_requested_protocols` из `ctx.extra` в `patch_mcs_server`.
+5. `libs/rdp/mcs.py` — `patch_mcs_server(data, *, client_requested_protocols=None)` теперь патчит `clientRequestedProtocols` в SC_CORE на значение клиента (если передано), или fallback на `PROTOCOL_SSL`.
+
+### Действие 18.6
+**Верификация**: два успешных подключения iPhone (requestedProtocols=0x0B, SC_CORE: 0x03→0x0B, 74KB/151KB и 29KB/141KB, длительность 14 и 6 сек) + одно успешное подключение с ПК (requestedProtocols=0x01, SC_CORE: 0x03→0x01, 38KB/926KB). Фикс подтверждён runtime-доказательствами.
+
+### Действие 18.7
+Удалена вся debug-инструментация из `handler.py`, `relay.py`, `mcs.py`. Удалён debug volume из `docker-compose.yml`. Пересобран и перезапущен `rdp-relay`.

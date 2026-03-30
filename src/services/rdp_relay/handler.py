@@ -26,6 +26,7 @@ from rdp.x224 import (
     build_rdp_client_fingerprint,
     build_x224_cc_ssl,
     extract_cookie_token,
+    extract_requested_protocols,
 )
 from redis_store.active_tracker import ConnectionTracker
 from redis_store.sessions import SessionStore
@@ -71,7 +72,8 @@ class RdpConnectionHandler:
             client_ip = await self._resolve_client_ip(client_reader, client_writer)
             x224_request = await read_tpkt(client_reader)
             token = extract_cookie_token(x224_request)
-            logger.info("RDP request from %s, token extracted", client_ip)
+            client_requested_protocols = extract_requested_protocols(x224_request)
+            logger.info("RDP request from %s, token extracted, requestedProtocols=0x%x", client_ip, client_requested_protocols)
 
             session = self._sessions.get_session(token)
             if session is None:
@@ -139,6 +141,7 @@ class RdpConnectionHandler:
                 target_host=resolved_host,
                 target_port=session.target_port,
                 instance_id=self._cfg.instance.id,
+                extra={"client_requested_protocols": client_requested_protocols},
             )
             await self._plugins.on_session_start(ctx)
 
