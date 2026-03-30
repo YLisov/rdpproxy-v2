@@ -14,7 +14,7 @@ from services.admin.dependencies import get_config, get_db_sessionmaker, require
 
 router = APIRouter(prefix="/api/admin/settings", tags=["admin-settings"])
 
-_MERGE_KEYS = frozenset({"ldap", "security", "proxy", "admin_security", "redis"})
+_MERGE_KEYS = frozenset({"ldap", "security", "proxy", "admin_security", "redis", "portal"})
 
 
 class SettingsPayload(BaseModel):
@@ -38,6 +38,7 @@ async def get_settings(request: Request, _: AdminWebSessionData = Depends(requir
         out.setdefault("ldap", cfg.ldap.model_dump())
         out.setdefault("security", cfg.security.model_dump())
         out.setdefault("proxy", cfg.proxy.model_dump())
+        out.setdefault("portal", {"name": "DC319"})
         return out
     finally:
         await session.close()

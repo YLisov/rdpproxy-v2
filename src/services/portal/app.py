@@ -7,6 +7,7 @@ from pathlib import Path
 
 import sqlalchemy as sa
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config.loader import AppConfig
@@ -24,6 +25,8 @@ from services.portal.routes import auth, health, servers
 
 logger = logging.getLogger("rdpproxy.portal")
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+ASSETS_DIR = PROJECT_ROOT / "assets"
 
 
 def create_app(config: AppConfig) -> FastAPI:
@@ -41,6 +44,9 @@ def create_app(config: AppConfig) -> FastAPI:
     app.state.redis_client = redis_client
     app.state.session_store = SessionStore(redis_client, config.redis, config.security)
     app.state.ldap_auth = LDAPAuthenticator(config.ldap)
+
+    if ASSETS_DIR.exists():
+        app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(CorrelationIdMiddleware)

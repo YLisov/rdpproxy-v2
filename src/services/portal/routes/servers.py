@@ -18,6 +18,7 @@ from services.portal.dependencies import (
     get_config,
     get_current_session,
     get_db_sessionmaker,
+    get_portal_name,
     get_session_store,
     require_session,
 )
@@ -56,18 +57,19 @@ async def _list_visible_servers(request: Request, user_group_guids: list[str]) -
 async def index(request: Request) -> HTMLResponse:
     templates = request.app.state.templates
     session = get_current_session(request)
+    portal_name = await get_portal_name(request)
     if not session:
         csrf_token = request.cookies.get(CSRF_COOKIE_NAME) or secrets.token_urlsafe(24)
         response = templates.TemplateResponse(
             request, "login.html",
-            {"session": None, "servers": [], "error": None, "csrf_token": csrf_token},
+            {"session": None, "servers": [], "error": None, "csrf_token": csrf_token, "portal_name": portal_name},
         )
         response.set_cookie(key=CSRF_COOKIE_NAME, value=csrf_token, httponly=False, secure=False, samesite="lax", max_age=600)
         return response
     visible = await _list_visible_servers(request, session.group_guids)
     return templates.TemplateResponse(
         request, "login.html",
-        {"session": session, "servers": visible, "error": None, "csrf_token": None},
+        {"session": session, "servers": visible, "error": None, "csrf_token": None, "portal_name": portal_name},
     )
 
 

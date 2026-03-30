@@ -15,6 +15,7 @@ from services.portal.dependencies import (
     get_client_ip,
     get_config,
     get_ldap,
+    get_portal_name,
     get_session_store,
 )
 
@@ -30,12 +31,13 @@ def _ensure_csrf_token(request: Request) -> str:
     return request.cookies.get(CSRF_COOKIE_NAME) or _issue_csrf_token()
 
 
-def _render_login_page(request: Request, error: str | None, status_code: int = 200) -> HTMLResponse:
+async def _render_login_page(request: Request, error: str | None, status_code: int = 200) -> HTMLResponse:
     templates = request.app.state.templates
     csrf_token = _ensure_csrf_token(request)
+    portal_name = await get_portal_name(request)
     response = templates.TemplateResponse(
         request, "login.html",
-        {"session": None, "servers": [], "error": error, "csrf_token": csrf_token},
+        {"session": None, "servers": [], "error": error, "csrf_token": csrf_token, "portal_name": portal_name},
         status_code=status_code,
     )
     response.set_cookie(key=CSRF_COOKIE_NAME, value=csrf_token, httponly=False, secure=False, samesite="lax", max_age=600)
@@ -82,10 +84,14 @@ async def login(
 ) -> HTMLResponse:
     csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME, "")
     if not csrf_cookie or csrf_cookie != csrf_token:
-        return _render_login_page(request, error="Сессия формы истекла. Обновите страницу и попробуйте снова.", status_code=400)
+        return await _render_login_page(
+            request,
+            error="Сессия формы истекла. Обновите страницу и попробуйте снова.",
+            status_code=400,
+        )
 
     if _is_login_locked(request, username):
-        return _render_login_page(request, error="Слишком много попыток входа. Попробуйте позже.", status_code=429)
+        return await _render_login_page(request, error="Слишком много попыток входа. Попробуйте позже.", status_code=429)
 
     ldap = get_ldap(request)
     try:
@@ -93,7 +99,7 @@ async def login(
     except Exception as exc:
         logger.warning("Login failed for username=%r: %s", username, exc)
         _record_failed_login(request, username)
-        return _render_login_page(request, error="Неверный логин или пароль.", status_code=401)
+        return await _render_login_page(request, error="Неверный логин или пароль.", status_code=401)
 
     store = get_session_store(request)
     _clear_failed_login(username, request)

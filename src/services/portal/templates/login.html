@@ -1,107 +1,753 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru"{% if not session %} class="auth-html"{% endif %}>
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RDP Proxy Portal</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{{ portal_name or 'DC319' }}</title>
   <style>
-    :root{
-      --bg:#f6f8fb; --fg:#111827; --card:#ffffff; --muted:#6b7280; --border:#dbe2ea; --primary:#2563eb;
+    :root {
+      --header-bg: #574f5b;
+      --header-fg: #ffffff;
+      --accent: #02a1c1;
+      --accent-hover: #0292af;
+      --surface: #ffffff;
+      --page-bg: #f9f9f9;
+      --text-main: #333333;
+      --text-muted: #666666;
+      --border: #cccccc;
+      --danger: #c62828;
+      --auth-overlay: rgba(63, 54, 67, 0.82);
     }
-    [data-theme="dark"]{
-      --bg:#0b1220; --fg:#e5e7eb; --card:#121c2f; --muted:#9ca3af; --border:#24324a; --primary:#60a5fa;
+
+    * { box-sizing: border-box; }
+    html {
+      height: 100%;
     }
-    body { font-family: Arial, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 16px; background:var(--bg); color:var(--fg); }
-    .topbar { display:flex; justify-content:space-between; align-items:center; }
-    .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
-    form { display: grid; gap: 10px; max-width: 360px; }
-    input, button { padding: 10px; font-size: 14px; border-radius:8px; border:1px solid var(--border); }
-    button { background:var(--primary); color:white; border:none; cursor:pointer; }
-    a { color:var(--primary); }
-    .muted { color: var(--muted); }
-    .error { color: #ef4444; margin-top: 12px; }
-    .servers { margin-top: 24px; }
-    .server-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-      gap: 16px;
+    body {
+      margin: 0;
+      min-height: 100%;
+      font-family: "Helvetica Neue", "Segoe UI", Arial, sans-serif;
+      color: var(--text-main);
+      background: var(--page-bg);
     }
-    .server-tile {
+
+    .content-wrap {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 28px 24px 36px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 8px;
+      padding: 11px 14px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      text-align: center;
+      display: inline-block;
+    }
+    .btn:hover { background: var(--accent-hover); }
+
+    .btn-link {
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      padding: 7px 12px;
+      border-radius: 7px;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .user-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .error {
+      margin-top: 0;
+      color: var(--danger);
+      font-size: 14px;
+      line-height: 1.4;
+      width: 100%;
+      max-width: 430px;
+      text-align: center;
+    }
+
+    html.auth-html {
+      min-height: 100%;
+      min-height: 100dvh;
+      min-height: -webkit-fill-available;
+      background-color: #2a2438;
+    }
+    body.auth-page {
+      background-color: #2a2438;
+      background-image: url("/assets/images/ReceiverFullScreenBackground.jpg");
+      background-repeat: no-repeat;
+      background-size: cover;
+      background-position: center center;
+      min-height: 100vh;
+      min-height: 100dvh;
+      min-height: -webkit-fill-available;
+      overflow-x: hidden;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .auth-viewport {
+      min-height: 100vh;
+      min-height: 100dvh;
+      min-height: -webkit-fill-available;
+      position: relative;
+      overflow: hidden;
+    }
+    .auth-band {
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 100%;
+      min-height: 292px;
+      background: rgba(63, 54, 67, 0.75);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       display: flex;
       flex-direction: column;
-      align-items: stretch;
-      gap: 12px;
-      padding: 18px;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: var(--card);
-      box-shadow: 0 1px 2px rgba(0,0,0,.04);
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 24px;
+      z-index: 1;
     }
-    .server-tile .name { font-weight: 700; font-size: 15px; line-height: 1.3; }
-    .server-tile a.download {
+    .auth-title {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 300;
+      color: #ffffff;
       text-align: center;
-      padding: 10px;
+      width: 100%;
+      max-width: 430px;
+    }
+    .auth-form {
+      display: grid;
+      gap: 12px;
+      width: 100%;
+      max-width: 430px;
+    }
+    .auth-label {
+      display: grid;
+      gap: 6px;
+      font-size: 13px;
+      color: #e5e7eb;
+    }
+    .auth-input {
+      border: 1px solid #d1d5db;
       border-radius: 8px;
-      background: var(--primary);
-      color: #fff !important;
+      height: 42px;
+      padding: 0 12px;
+      font-size: 14px;
+      color: #111827;
+      background: #ffffff;
+    }
+
+    .portal-page {
+      background: var(--page-bg);
+    }
+    .portal-page[data-theme="dark"] {
+      --surface: #1f2430;
+      --page-bg: #111522;
+      --text-main: #e7eaf2;
+      --text-muted: #b6bfd4;
+      --border: #3a4258;
+      --header-bg: #383241;
+      --header-fg: #f3f4f6;
+    }
+
+    .portal-topbar {
+      background: var(--header-bg);
+      color: var(--header-fg);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .portal-topbar .left {
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      font-size: 24px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+    .portal-menu {
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      min-width: 280px;
+    }
+    .portal-menu-item {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 28px;
+      color: var(--header-fg);
       text-decoration: none;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+      border-left: 1px solid rgba(255, 255, 255, 0.08);
+      border-right: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .portal-topbar .right {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      padding: 0 16px;
       font-size: 14px;
     }
-    .server-tile a.download:hover { filter: brightness(1.05); }
+    .portal-topbar .user-meta,
+    .portal-topbar .user-meta span {
+      color: var(--header-fg);
+    }
+    .theme-toggle {
+      width: 26px;
+      height: 26px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.05);
+      color: #ffffff;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      padding: 0;
+    }
+    .theme-toggle .icon-dark { display: none; }
+    .portal-page[data-theme="dark"] .theme-toggle .icon-light { display: none; }
+    .portal-page[data-theme="dark"] .theme-toggle .icon-dark { display: inline; }
+    .portal-logout {
+      color: var(--header-fg);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 7px;
+      padding: 6px 10px;
+      text-decoration: none;
+      font-size: 13px;
+    }
+
+    .portal-subbar {
+      height: 44px;
+      background: #f3f4f6;
+      border-top: 1px solid #d7dbe3;
+      border-bottom: 1px solid #d7dbe3;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 0 16px;
+    }
+    .portal-page[data-theme="dark"] .portal-subbar {
+      background: #202637;
+      border-top-color: #3a4258;
+      border-bottom-color: #3a4258;
+    }
+    .search-input {
+      width: 230px;
+      height: 30px;
+      border: 1px solid #cfd5df;
+      border-radius: 4px;
+      padding: 0 10px;
+      font-size: 12px;
+      background: #ffffff;
+      color: #1f2937;
+    }
+    .portal-page[data-theme="dark"] .search-input {
+      border-color: #4a546f;
+      background: #151b2a;
+      color: #e5e7eb;
+    }
+
+    .servers {
+      padding: 20px 18px;
+      margin-top: 8px;
+    }
+    .server-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+      gap: 14px;
+    }
+    .server-tile {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 68px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .server-icon {
+      width: 34px;
+      height: 34px;
+      object-fit: contain;
+      flex: 0 0 auto;
+    }
+    .server-name {
+      font-size: 14px;
+      line-height: 1.3;
+      font-weight: 400;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .empty {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    /* —— Мобильный портал —— */
+    .mobile-only {
+      display: none;
+    }
+    .portal-topbar-main {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: stretch;
+      min-height: 76px;
+    }
+    .nav-burger {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 48px;
+      height: 100%;
+      min-height: 48px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--header-fg);
+      cursor: pointer;
+      border-radius: 6px;
+    }
+    .nav-burger:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .nav-burger-lines {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      width: 22px;
+    }
+    .nav-burger-lines span {
+      display: block;
+      height: 2px;
+      background: currentColor;
+      border-radius: 1px;
+    }
+    .portal-mobile-active {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-size: 16px;
+      font-weight: 600;
+      color: #ffffff;
+      padding: 0 8px;
+    }
+    .search-trigger {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--header-fg);
+      cursor: pointer;
+      border-radius: 6px;
+    }
+    .search-trigger svg {
+      display: block;
+    }
+    .portal-search-banner {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+      min-height: 56px;
+      background: var(--header-bg);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .search-input-mobile-expanded {
+      flex: 1;
+      min-width: 0;
+      height: 38px;
+      border: 1px solid #cfd5df;
+      border-radius: 8px;
+      padding: 0 12px;
+      font-size: 15px;
+      background: #ffffff;
+      color: #1f2937;
+    }
+    .portal-page[data-theme="dark"] .search-input-mobile-expanded {
+      border-color: #4a546f;
+      background: #151b2a;
+      color: #e5e7eb;
+    }
+    .search-cancel-btn {
+      flex: 0 0 auto;
+      padding: 8px 4px;
+      border: 0;
+      background: transparent;
+      color: #ffffff;
+      font-size: 16px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .portal-menu-item.active {
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .portal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 1000;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s ease, visibility 0.2s ease;
+    }
+    .portal-overlay.is-open {
+      opacity: 1;
+      visibility: visible;
+    }
+    .portal-drawer {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: min(300px, 85vw);
+      max-width: 320px;
+      background: #3d3644;
+      z-index: 1001;
+      transform: translateX(-100%);
+      transition: transform 0.25s ease;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 4px 0 24px rgba(0, 0, 0, 0.25);
+    }
+    .portal-page[data-theme="dark"] .portal-drawer {
+      background: #1a1f2e;
+    }
+    .portal-drawer.is-open {
+      transform: translateX(0);
+    }
+    .portal-drawer-head {
+      padding: 18px 20px 12px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #ffffff;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .portal-drawer-nav {
+      flex: 1;
+      padding: 12px 0;
+      overflow-y: auto;
+    }
+    .portal-drawer-link {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+      color: #e5e7eb;
+      text-decoration: none;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+    }
+    .portal-drawer-link.active {
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .portal-drawer-footer {
+      padding: 16px 20px;
+      padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .portal-drawer-user {
+      font-size: 14px;
+      color: #d1d5db;
+      word-break: break-all;
+    }
+    .portal-drawer-logout {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    body.portal-drawer-open {
+      overflow: hidden;
+    }
+
+    @media (max-width: 768px) {
+      .mobile-only {
+        display: flex;
+      }
+      .portal-mobile-active.mobile-only {
+        display: flex;
+      }
+      .search-trigger.mobile-only {
+        display: flex;
+      }
+      .nav-burger.mobile-only {
+        display: flex;
+      }
+      .desktop-only-nav {
+        display: none !important;
+      }
+      .desktop-only-user {
+        display: none !important;
+      }
+      .portal-topbar .left {
+        display: none;
+      }
+      .portal-topbar-main {
+        grid-template-columns: auto 1fr auto;
+        gap: 4px;
+        min-height: 56px;
+        align-items: center;
+      }
+      .portal-topbar .right {
+        gap: 4px;
+        padding-right: 12px;
+      }
+      .portal-subbar {
+        display: none;
+      }
+      .portal-topbar.is-search-open .portal-topbar-main {
+        display: none;
+      }
+      .portal-topbar.is-search-open .portal-search-banner {
+        display: flex !important;
+      }
+    }
+    @media (min-width: 769px) {
+      .portal-search-banner {
+        display: none !important;
+      }
+    }
   </style>
 </head>
-<body data-theme="light">
-  <div class="topbar">
-    <h1>RDP Proxy Portal</h1>
-    <button id="themeBtn" type="button">🌗 Тема</button>
-  </div>
-
+<body class="{% if not session %}auth-page{% else %}portal-page{% endif %}">
   {% if not session %}
-  <div class="card">
-  <form method="post" action="/login">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">
-    <label>
-      Логин
-      <input type="text" name="username" required>
-    </label>
-    <label>
-      Пароль
-      <input type="password" name="password" required>
-    </label>
-    <button type="submit">Войти</button>
-  </form>
-  </div>
-  {% if error %}
-  <div class="error">{{ error }}</div>
-  {% endif %}
+  <main class="auth-viewport">
+    <div class="auth-band">
+      <h2 class="auth-title">Войдите в систему</h2>
+      <form class="auth-form" method="post" action="/login">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">
+        <label class="auth-label">
+          Имя пользователя
+          <input class="auth-input" type="text" name="username" autocomplete="username" required>
+        </label>
+        <label class="auth-label">
+          Пароль
+          <input class="auth-input" type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <button class="btn" type="submit">Войти</button>
+      </form>
+      {% if error %}
+      <div class="error">{{ error }}</div>
+      {% endif %}
+    </div>
+  </main>
   {% else %}
-  <p>Пользователь: <strong>{{ session.username }}</strong> · <a href="/logout">Выйти</a></p>
-
-  <div class="servers card">
-    <h2>Рабочие столы</h2>
+  <div id="portalOverlay" class="portal-overlay" aria-hidden="true"></div>
+  <aside id="portalDrawer" class="portal-drawer" aria-hidden="true" aria-label="Меню портала">
+    <div class="portal-drawer-head">{{ portal_name or 'DC319' }}</div>
+    <nav class="portal-drawer-nav" aria-label="Разделы">
+      <a class="portal-drawer-link active" href="/">Рабочие столы</a>
+    </nav>
+    <div class="portal-drawer-footer">
+      <span class="portal-drawer-user">{{ session.username }}</span>
+      <a class="portal-drawer-logout" href="/logout">Выйти</a>
+    </div>
+  </aside>
+  <header class="portal-topbar" id="portalTopbar">
+    <div class="portal-topbar-main">
+      <button type="button" class="nav-burger mobile-only" id="navBurger" aria-label="Открыть меню" aria-expanded="false" aria-controls="portalDrawer">
+        <span class="nav-burger-lines" aria-hidden="true"><span></span><span></span><span></span></span>
+      </button>
+      <div class="left">{{ portal_name or 'DC319' }}</div>
+      <nav class="portal-menu desktop-only-nav" aria-label="Разделы портала">
+        <a class="portal-menu-item active" href="/">Рабочие столы</a>
+      </nav>
+      <div class="portal-mobile-active mobile-only" id="mobileSectionTitle">Рабочие столы</div>
+      <div class="right">
+        <button id="themeToggle" class="theme-toggle" type="button" title="Сменить тему">
+          <span class="icon-light">☀</span>
+          <span class="icon-dark">☾</span>
+        </button>
+        <button type="button" class="search-trigger mobile-only" id="mobileSearchOpen" aria-label="Поиск">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"></circle>
+            <path d="M21 21l-4.35-4.35"></path>
+          </svg>
+        </button>
+        <div class="user-meta desktop-only-user">
+          <span>{{ session.username }}</span>
+        </div>
+        <a class="portal-logout desktop-only-user" href="/logout">Выход</a>
+      </div>
+    </div>
+    <div class="portal-search-banner" id="mobileSearchBar">
+      <input id="mobileSearchInput" class="search-input-mobile-expanded" type="search" placeholder="Поиск на рабочих столах" autocomplete="off" aria-label="Поиск на рабочих столах">
+      <button type="button" class="search-cancel-btn" id="mobileSearchCancel">Отмена</button>
+    </div>
+  </header>
+  <div class="portal-subbar">
+    <input id="desktopSearch" class="search-input" type="search" placeholder="Поиск на рабочих столах" autocomplete="off">
+  </div>
+  <main class="content-wrap">
+    <section class="servers">
     {% if servers %}
     <div class="server-grid">
       {% for srv in servers %}
-      <div class="server-tile">
-        <div class="name">{{ srv.name }}</div>
-        <a class="download" href="/rdp/{{ srv.id }}">Скачать RDP</a>
-      </div>
+      <a class="server-tile" href="/rdp/{{ srv.id }}" title="{{ srv.name }}" data-name="{{ srv.name|lower }}">
+        <img class="server-icon" src="/assets/images/Desktop.png" alt="">
+        <div class="server-name">{{ srv.name }}</div>
+      </a>
       {% endfor %}
     </div>
     {% else %}
-    <p>Нет доступных серверов по группам.</p>
+    <p class="empty">Нет доступных серверов по группам.</p>
     {% endif %}
-  </div>
+    </section>
+  </main>
   {% endif %}
   <script>
-    const btn = document.getElementById('themeBtn');
-    const current = localStorage.getItem('rdp-theme') || 'light';
-    document.body.setAttribute('data-theme', current);
-    btn?.addEventListener('click', () => {
-      const now = document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      document.body.setAttribute('data-theme', now);
-      localStorage.setItem('rdp-theme', now);
-    });
+    (function () {
+      const body = document.body;
+      if (!body.classList.contains('portal-page')) return;
+      const key = 'portal-theme';
+      const saved = localStorage.getItem(key) || 'light';
+      body.setAttribute('data-theme', saved);
+      const themeBtn = document.getElementById('themeToggle');
+      if (themeBtn) {
+        themeBtn.addEventListener('click', function () {
+          const now = body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+          body.setAttribute('data-theme', now);
+          localStorage.setItem(key, now);
+        });
+      }
+
+      const tiles = Array.from(document.querySelectorAll('.server-tile'));
+      const desktopSearch = document.getElementById('desktopSearch');
+      const mobileSearchInput = document.getElementById('mobileSearchInput');
+      const topbar = document.getElementById('portalTopbar');
+      const mobileSearchOpen = document.getElementById('mobileSearchOpen');
+      const mobileSearchCancel = document.getElementById('mobileSearchCancel');
+      const overlay = document.getElementById('portalOverlay');
+      const drawer = document.getElementById('portalDrawer');
+      const burger = document.getElementById('navBurger');
+
+      function applyTileFilter(q) {
+        const qq = (q || '').trim().toLowerCase();
+        tiles.forEach(function (tile) {
+          const name = (tile.getAttribute('data-name') || '').toLowerCase();
+          tile.style.display = (!qq || name.startsWith(qq)) ? '' : 'none';
+        });
+      }
+
+      if (tiles.length) {
+        if (desktopSearch) {
+          desktopSearch.addEventListener('input', function () {
+            if (mobileSearchInput && topbar && !topbar.classList.contains('is-search-open')) {
+              mobileSearchInput.value = desktopSearch.value;
+            }
+            applyTileFilter(desktopSearch.value);
+          });
+        }
+        if (mobileSearchInput) {
+          mobileSearchInput.addEventListener('input', function () {
+            if (desktopSearch) desktopSearch.value = mobileSearchInput.value;
+            applyTileFilter(mobileSearchInput.value);
+          });
+        }
+      }
+
+      function openDrawer() {
+        if (!drawer || !overlay || !burger) return;
+        drawer.classList.add('is-open');
+        overlay.classList.add('is-open');
+        drawer.setAttribute('aria-hidden', 'false');
+        overlay.setAttribute('aria-hidden', 'false');
+        burger.setAttribute('aria-expanded', 'true');
+        body.classList.add('portal-drawer-open');
+      }
+
+      function closeDrawer() {
+        if (!drawer || !overlay || !burger) return;
+        drawer.classList.remove('is-open');
+        overlay.classList.remove('is-open');
+        drawer.setAttribute('aria-hidden', 'true');
+        overlay.setAttribute('aria-hidden', 'true');
+        burger.setAttribute('aria-expanded', 'false');
+        body.classList.remove('portal-drawer-open');
+      }
+
+      if (burger) burger.addEventListener('click', function () {
+        if (topbar && topbar.classList.contains('is-search-open')) closeMobileSearch();
+        if (drawer && drawer.classList.contains('is-open')) closeDrawer();
+        else openDrawer();
+      });
+      if (overlay) overlay.addEventListener('click', closeDrawer);
+
+      function openMobileSearch() {
+        if (!topbar) return;
+        closeDrawer();
+        topbar.classList.add('is-search-open');
+        if (mobileSearchInput) {
+          if (desktopSearch) mobileSearchInput.value = desktopSearch.value;
+          mobileSearchInput.focus();
+        }
+        applyTileFilter(mobileSearchInput ? mobileSearchInput.value : '');
+      }
+
+      function closeMobileSearch() {
+        if (!topbar) return;
+        topbar.classList.remove('is-search-open');
+        if (desktopSearch && mobileSearchInput) desktopSearch.value = mobileSearchInput.value;
+        applyTileFilter(desktopSearch ? desktopSearch.value : (mobileSearchInput ? mobileSearchInput.value : ''));
+      }
+
+      if (mobileSearchOpen) mobileSearchOpen.addEventListener('click', openMobileSearch);
+      if (mobileSearchCancel) mobileSearchCancel.addEventListener('click', closeMobileSearch);
+
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+          if (drawer && drawer.classList.contains('is-open')) closeDrawer();
+          if (topbar && topbar.classList.contains('is-search-open')) closeMobileSearch();
+        }
+      });
+    })();
   </script>
 </body>
 </html>

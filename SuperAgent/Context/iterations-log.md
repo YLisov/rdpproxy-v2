@@ -230,3 +230,252 @@ docker compose up -d --build rdp-relay
 ```bash
 docker compose up -d --build rdp-relay
 ```
+
+---
+## Итерация #10
+**Дата**: 2026-03-30
+**Запрос**: Загрузить фоновое изображение страницы входа ADC и добавить его в стайлгайд.
+
+### Действие 10.1
+Скачано изображение фона входа по URL:
+`https://rd.dc319.ru:4433/logon/LogonPoint/receiver/images/common/ReceiverFullScreenBackground.jpg`
+
+Сохранено в проект:
+- `assets/images/ReceiverFullScreenBackground.jpg`
+
+### Действие 10.2
+Обновлен `styleguide.md`:
+- в разделе палитры и фонов указан локальный путь `assets/images/ReceiverFullScreenBackground.jpg`;
+- в разделе экрана логина добавлено явное указание фонового файла;
+- добавлен markdown-превью-блок изображения:
+  `![Фон страницы входа](assets/images/ReceiverFullScreenBackground.jpg)`.
+
+### Действие 10.3
+Обновлен `SuperAgent/Context/project-architecture.md`:
+- добавлены новые элементы структуры `assets/images/ReceiverFullScreenBackground.jpg` и `styleguide.md`.
+
+---
+## Итерация #11
+**Дата**: 2026-03-30
+**Запрос**: Оформить пользовательский портал в стиле референс-дизайна; использовать фоновое изображение только на странице входа, остальные части оставить однотонными.
+
+### Действие 11.1
+Обновлен шаблон `src/services/portal/templates/login.html`:
+- переработан визуальный стиль под палитру и типографику, близкую к Citrix Gateway (`#574f5b`, `#02a1c1`, светлые карточки, аккуратные границы);
+- добавено разделение режимов:
+  - `auth-page` (для неавторизованного пользователя) с фоном `url("/assets/images/ReceiverFullScreenBackground.jpg")`;
+  - `portal-page` (после входа) с однотонным фоном `#f9f9f9`;
+- обновлена структура экрана входа (оверлей-карточка поверх фонового изображения);
+- обновлена структура пользовательского портала с однотонным фоном и сеткой карточек серверов;
+- удален переключатель темы (светлая/тёмная), чтобы сохранить единый визуальный стиль.
+
+### Действие 11.2
+Обновлен `src/services/portal/app.py`:
+- добавлен import `StaticFiles`;
+- добавлен mount `"/assets"` -> локальная папка `assets/`, чтобы фоновое изображение и другие ассеты были доступны в UI.
+
+### Действие 11.3
+Обновлен `SuperAgent/Context/project-architecture.md`:
+- добавлено описание новой роли `templates/login.html`;
+- зафиксировано подключение статики `/assets` в portal app.
+
+---
+## Итерация #12
+**Дата**: 2026-03-30
+**Запрос**: Исправить `404 Not Found` для `/assets/images/ReceiverFullScreenBackground.jpg`.
+
+### Действие 12.1
+Диагностирована причина:
+- в `portal` приложении route `/assets` монтируется только при наличии директории `/app/assets`;
+- в Docker image директория `assets` отсутствовала, так как не копировалась в `Dockerfile`.
+
+### Действие 12.2
+Исправлен `Dockerfile`:
+- добавлена строка `COPY assets/ ./assets/`.
+
+### Действие 12.3
+Обновлен `SuperAgent/Context/project-architecture.md`:
+- добавлено примечание о копировании `assets` в контейнер для корректной раздачи статических файлов портала.
+
+---
+## Итерация #13
+**Дата**: 2026-03-30
+**Запрос**: Добавить параметр «Наименование портала» (значение `DC319`), использовать его в `<title>` пользовательского портала, растянуть серую площадку под формой входа на всю ширину экрана, убрать верхнюю серую полосу с надписью `RDP Proxy Portal`.
+
+### Действие 13.1
+Обновлен API настроек `src/services/admin/routes/settings.py`:
+- добавлен ключ `portal` в `_MERGE_KEYS`;
+- в `GET /api/admin/settings` добавлен дефолт:
+  - `portal: { name: "DC319" }`.
+
+### Действие 13.2
+Обновлен UI админ-настроек `src/services/admin/templates/admin_settings.html`:
+- добавлена новая вкладка **Портал**;
+- добавлено поле **Наименование портала** (`portal_name`);
+- добавлено сохранение значения в ключ `portal` (`{ name: ... }`) через существующий endpoint `PUT /api/admin/settings`.
+
+### Действие 13.3
+Обновлены зависимости и роуты portal:
+- `src/services/portal/dependencies.py`:
+  - добавлен `get_portal_name()` с чтением `portal.name` из `portal_settings` и fallback `DC319`;
+- `src/services/portal/routes/auth.py`:
+  - `_render_login_page` переведен в async;
+  - в контекст шаблона добавлен `portal_name`;
+- `src/services/portal/routes/servers.py`:
+  - в контекст шаблона добавлен `portal_name` как для гостя, так и для авторизованного пользователя.
+
+### Действие 13.4
+Обновлен шаблон `src/services/portal/templates/login.html`:
+- `<title>` теперь формируется из `{{ portal_name }}` (fallback `DC319`);
+- удалена верхняя серая полоса/хедер с текстом `RDP Proxy Portal`;
+- добавлена полноширинная серая подложка `auth-band` под формой входа (как в референсе);
+- сохранено требование: фон-изображение только на странице входа, авторизованная часть портала остается с однотонным фоном.
+
+### Действие 13.5
+Обновлен `SuperAgent/Context/project-architecture.md`:
+- зафиксированы новые зависимости и поведение `portal_name`/`auth-band`/settings `portal`.
+
+### Действие 13.6
+Пересобраны и перезапущены сервисы для применения изменений Python/HTML:
+```bash
+docker compose up -d --build portal admin
+```
+
+### Действие 13.7
+После пересоздания `portal/admin` через ingress `8443` наблюдался `503` из-за устаревшего backend-адреса в HAProxy (после смены container IP).
+Выполнен перезапуск HAProxy:
+```bash
+docker compose restart haproxy
+```
+
+### Действие 13.8
+Проверка результата:
+- пользовательский портал отдает HTML с `<title>DC319</title>`;
+- endpoint фонового изображения доступен;
+- `portal` и `admin` в статусе `healthy`.
+
+### Действие 13.9
+По уточнению UX переработан экран входа в `src/services/portal/templates/login.html`:
+- удален отдельный DOM-блок `section.auth-card`;
+- форма входа перенесена внутрь `div.auth-band`;
+- высота `auth-band` изменена с `170px` на `292px` (высота формы);
+- полоса и форма теперь визуально единый центральный блок.
+
+### Действие 13.10
+Применение изменений:
+```bash
+docker compose up -d --build portal
+```
+Проверка через ingress:
+```bash
+curl -k -I https://127.0.0.1:8443/
+```
+Ответ получен от portal (HTTP 405 на HEAD, что ожидаемо для endpoint с методом GET).
+
+### Действие 13.11
+Дополнительная правка по уточнению DOM:
+- в `src/services/portal/templates/login.html` удален контейнер `div.auth-form-wrap`;
+- заголовок и форма логина рендерятся напрямую внутри `div.auth-band`;
+- обновлены CSS-правила выравнивания/ширины для `auth-band`, `auth-title`, `auth-form`, `error`, чтобы сохранить центрирование без дополнительной обертки.
+
+### Действие 13.12
+Изменена прозрачность полосы входа:
+- в `src/services/portal/templates/login.html` для `.auth-band` установлено
+  `background: rgba(63, 54, 67, 0.75)`.
+
+### Действие 13.13
+Редизайн интерфейса после входа (`src/services/portal/templates/login.html`):
+- добавлена верхняя тёмная панель:
+  - слева заголовок сервиса (`portal_name`, сейчас `DC319`);
+  - по центру пункт меню `Рабочие столы`;
+  - справа имя пользователя, кнопка `Выход` и квадратная кнопка переключения темы (dark/light);
+- добавлен JS-переключатель темы для авторизованной страницы с сохранением в `localStorage`.
+
+### Действие 13.14
+Обновлены плитки рабочих столов:
+- кнопка `Скачать RDP` удалена;
+- каждая плитка теперь содержит:
+  - иконку `https://rd.dc319.ru:4433/vpn/media/Desktop.png`;
+  - название сервера;
+- плитка сделана кликабельной (`href="/rdp/<id>"`), скачивание `.rdp` запускается по клику на плитку.
+
+### Действие 13.15
+Дополнительная корректировка UI по уточнениям:
+- в `src/services/portal/templates/login.html`:
+  - заголовок в `header.portal-topbar > div.left` сделан белым, крупнее и жирнее (`24px`, `700`);
+  - в `header.portal-topbar > div.right > button#themeToggle` заменено содержимое `1` на иконки `☀/☾`;
+  - имя пользователя в правом блоке сделано белым в светлой теме;
+  - под topbar добавлена узкая подпанель `portal-subbar` с поисковым полем справа;
+  - реализован поиск по плиткам рабочих столов: фильтрация по первым буквам названия (case-insensitive, `startsWith`);
+  - источник иконки плитки переключен на локальный `/assets/images/Desktop.png` (исключает блокировку CSP и проблему загрузки внешнего изображения).
+
+### Действие 13.16
+Подготовлен локальный ассет иконки рабочего стола:
+- скачан `https://rd.dc319.ru:4433/vpn/media/Desktop.png`;
+- сохранен в проект `assets/images/Desktop.png`.
+
+### Действие 13.17
+Удалена лишняя подпись в подпанели портала:
+- из `src/services/portal/templates/login.html` удалены блок `div.portal-subbar-left` и связанные стили;
+- у `.portal-subbar` выравнивание изменено на `justify-content: flex-end`, чтобы осталось только поле поиска справа.
+
+---
+
+## Итерация #14
+**Время начала**: 2026-03-30
+**Запрос**: Фон входа на весь экран; убрать белую полосу и лишний скролл на мобильном логине; после входа — мобильная шапка (бургер, активный пункт по центру, тема + иконка поиска), drawer с меню и выходом, раскрытие поиска с «Отмена».
+
+### Действие 14.1
+Файл `src/services/portal/templates/login.html`:
+- для неавторизованной страницы: `viewport-fit=cover`, класс `auth-html` на `<html>`, фон на `body.auth-page` с `cover`, `min-height: 100dvh` / `-webkit-fill-available`, запасной `background-color`, `overflow-x: hidden`;
+- `auth-viewport` с тем же минимумом высоты и flex-колонкой;
+- портал: разметка `portal-topbar-main` (бургер, бренд/центр, правая зона), скрываемое на мобильном десктоп-меню и блок пользователя, `portal-search-banner` с полем и «Отмена», overlay + `portal-drawer` с навигацией и футером (логин + «Выйти»);
+- стили и JS: открытие/закрытие drawer и поиска, синхронизация фильтра плиток между `desktopSearch` и `mobileSearchInput`, `Escape`.
+
+### Действие 14.2
+Обновлены `SuperAgent/Context/project-architecture.md` и `SuperAgent/Context/iterations-log.md` под мобильный UI портала и правки страницы входа.
+
+---
+
+## Итерация #15
+**Время начала**: 2026-03-30 19:02:01
+**Запрос**: Экран входа сломался, форма пропала.
+
+### Действие 15.1
+Исправлен способ центрирования формы на странице входа в `src/services/portal/templates/login.html`:
+- у `.auth-viewport` включено flex-центрирование (`align-items: center`, `justify-content: center`, `padding: 24px 0`);
+- у `.auth-band` удалено абсолютное позиционирование (`position: relative`, `top: auto`, `transform: none`, `width: 100%`).
+
+### Действие 15.2
+Обновлены `SuperAgent/Context/project-architecture.md` и `SuperAgent/Context/iterations-log.md` для фиксации исправления.
+
+---
+
+## Итерация #16
+**Время начала**: 2026-03-30 19:04:19
+**Запрос**: Форма входа должна быть строго посередине.
+
+### Действие 16.1
+Доработано центрирование формы в `src/services/portal/templates/login.html`:
+- у `.auth-viewport` убран вертикальный отступ (`padding: 0`);
+- у `.auth-band` заменено фиксированное `height` на `min-height: 292px`;
+- `auth-band` переведен на `display: flex` с `flex-direction: column`, `align-items: center`, `justify-content: center`;
+- внутренний отступ установлен `padding: 24px` для равномерного поля по всем сторонам.
+
+### Действие 16.2
+Обновлены `SuperAgent/Context/project-architecture.md` и `SuperAgent/Context/iterations-log.md` для фиксации корректировки центрирования.
+
+---
+
+## Итерация #17
+**Время начала**: 2026-03-30 19:07:26
+**Запрос**: Панель входа прилипла к верху, нужна строго по центру по вертикали.
+
+### Действие 17.1
+Уточнено центрирование полосы входа в `src/services/portal/templates/login.html`:
+- в `.auth-viewport` отключено flex-центрирование, включено `overflow: hidden`;
+- блок `.auth-band` переведен на `position: fixed` с привязкой `top: 50%` и `transform: translateY(-50%)`;
+- ширина оставлена `100%`, чтобы полоса сохраняла полноширинный вид.
+
+### Действие 17.2
+Обновлены `SuperAgent/Context/project-architecture.md` и `SuperAgent/Context/iterations-log.md` после правки центрирования.

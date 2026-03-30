@@ -33,6 +33,9 @@ RDP Relay ─────────────────────► Tar
 
 ```
 /opt/rdpproxy-v2/
+├── assets/
+│   └── images/
+│       └── ReceiverFullScreenBackground.jpg   # локальная копия фона страницы входа ADC
 ├── docker-compose.yml
 ├── Dockerfile
 ├── requirements.txt
@@ -42,9 +45,13 @@ RDP Relay ─────────────────────► Tar
 ├── .env.example
 ├── .env                       # локальный runtime, gitignored
 ├── README.md
+├── styleguide.md              # детальный стайлгайд по дизайну ADC/Citrix Gateway
 ├── deploy/
 └── src/
 ```
+
+Примечание по сборке контейнеров:
+- `Dockerfile` включает `COPY assets/ ./assets/`, чтобы статические ассеты (например фон логина) были доступны внутри `portal` контейнера по пути `/app/assets`.
 
 ### 3.2 Shared libs (`src/libs`)
 
@@ -76,6 +83,37 @@ RDP Relay ─────────────────────► Tar
 - `routes/health.py`: health endpoint.
 - `dependencies.py`: DI, session extraction, config/ldap access.
 - `middleware/*`: security headers, correlation id, real-ip.
+- `templates/login.html`: единый шаблон auth + пользовательского портала:
+  - страница входа использует фон `assets/images/ReceiverFullScreenBackground.jpg` с `background-size: cover`, класс `auth-html` на `<html>` и запасной цвет фона; высота вьюпорта через `100dvh` / `-webkit-fill-available` для уменьшения белой полосы на мобильных;
+  - после входа портал рендерится на однотонном фоне (`#f9f9f9`) в стиле Citrix Gateway.
+- `app.py`: добавлен mount статики `/assets` через `StaticFiles` для выдачи локальных ассетов портала.
+- `dependencies.py`: добавлен `get_portal_name()` — чтение `portal.name` из `portal_settings` с дефолтом `DC319`.
+- `routes/auth.py` и `routes/servers.py`: в контекст `login.html` прокидывается `portal_name` для динамического `<title>`.
+- `templates/login.html` дополнительно:
+  - убрана верхняя серая полоса с текстом `RDP Proxy Portal`;
+  - добавлена полноширинная полупрозрачная серая полоса (`auth-band`) под формой входа;
+  - форма входа перенесена внутрь `auth-band` (без отдельного внешнего блока `section.auth-card`);
+  - удален внутренний контейнер `div.auth-form-wrap`; заголовок/форма рендерятся напрямую в `auth-band`;
+  - высота `auth-band` синхронизирована с высотой формы входа (`292px`);
+  - прозрачность `auth-band` настроена через `background: rgba(63, 54, 67, 0.75)`;
+  - вертикальное центрирование формы входа переведено с `position: absolute` на flex-выравнивание в `auth-viewport`, чтобы форма стабильно отображалась на всех экранах;
+  - контейнер `auth-band` использует `display: flex` + `justify-content: center` и `min-height: 292px`, чтобы заголовок и поля входа были строго по центру полосы;
+  - для строгого центрирования полосы по вертикали относительно окна браузера `auth-band` позиционируется как `position: fixed` с `top: 50%` и `transform: translateY(-50%)`;
+  - `<title>` страницы берется из `portal_name`.
+  - авторизованный экран (ПК):
+    - верхняя тёмная панель (`portal-topbar-main`): слева `portal_name`, по центру меню (`Рабочие столы`), справа переключатель темы + имя пользователя + `Выход`;
+    - под topbar — `portal-subbar` с полем поиска справа;
+    - плитки рабочих столов: `/assets/images/Desktop.png`, клик по плитке ведёт на `/rdp/<id>`;
+    - поиск фильтрует плитки по началу названия (`startsWith`, без учёта регистра).
+  - авторизованный экран (мобильный, `max-width: 768px`):
+    - меню в боковом выезжающем drawer слева (бургер); в drawer — те же пункты навигации, внизу логин и «Выйти»; оверлей по клику закрывает меню;
+    - в шапке по центру остаётся активный раздел («Рабочие столы»); справа — кнопка темы и иконка поиска (поле поиска в subbar скрыто);
+    - по тапу на поиск шапка переключается в режим полноширинного поля с кнопкой «Отмена»; значение синхронизируется с полем поиска на ПК;
+    - `Escape` закрывает drawer и режим поиска.
+
+#### Admin Settings (`services/admin/routes/settings.py` + `templates/admin_settings.html`)
+- Добавлен новый раздел настроек `portal` с полем **Наименование портала** (`portal.name`).
+- При отсутствии записи в БД используется дефолт `DC319`.
 
 #### Admin (`services/admin`)
 - `app.py`: app factory + HTML endpoints.

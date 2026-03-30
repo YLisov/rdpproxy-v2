@@ -22,13 +22,22 @@
 {% block content %}
   <div id="status" class="hint"></div>
   <div class="tabs">
-    <button type="button" class="active" data-tab="admin">Админка (IP)</button>
+    <button type="button" class="active" data-tab="portal">Портал</button>
+    <button type="button" data-tab="admin">Админка (IP)</button>
     <button type="button" data-tab="ldap">LDAP</button>
     <button type="button" data-tab="security">Безопасность</button>
     <button type="button" data-tab="proxy">Прокси</button>
   </div>
 
-  <div id="panel-admin" class="panel active">
+  <div id="panel-portal" class="panel active">
+    <p class="hint">Наименование портала используется в теге <code>&lt;title&gt;</code> пользовательского портала и страницы входа.</p>
+    <label>Наименование портала
+      <input id="portal_name" type="text" maxlength="128" placeholder="DC319">
+    </label>
+    <div class="actions"><button type="button" class="save" data-save="portal">Сохранить</button></div>
+  </div>
+
+  <div id="panel-admin" class="panel">
     <p class="hint">Глобальный список IP/CIDR, с которых разрешён вход в админ-панель. Пусто = без ограничения. Сохраняется в БД и применяется сразу.</p>
     <label>Разрешённые IP (через запятую или с новой строки)
       <textarea id="admin_allowed_ips" placeholder="10.0.0.0/8&#10;192.168.1.10"></textarea>
@@ -96,6 +105,9 @@
   });
 
   function fillForms() {
+    const PS = settings.portal || {};
+    document.getElementById('portal_name').value = PS.name || 'DC319';
+
     const as = settings.admin_security || {};
     document.getElementById('admin_allowed_ips').value = (as.allowed_ips || []).join('\n');
 
@@ -140,6 +152,9 @@
       let payload = {};
       if (key === 'admin_security') {
         payload = { allowed_ips: parseIpList(document.getElementById('admin_allowed_ips').value) };
+      }
+      if (key === 'portal') {
+        payload = { name: document.getElementById('portal_name').value.trim() || 'DC319' };
       }
       if (key === 'ldap') {
         payload = {

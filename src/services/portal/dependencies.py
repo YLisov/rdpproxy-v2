@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from fastapi import HTTPException, Request
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from config.loader import AppConfig
+from db.models.settings import PortalSetting
 from identity.ldap_auth import LDAPAuthenticator
 from redis_store.sessions import SessionStore, WebSessionData
 
@@ -78,3 +80,18 @@ def require_session(request: Request) -> WebSessionData:
     if session is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return session
+
+
+async def get_portal_name(request: Request) -> str:
+    """Resolve portal display name from DB settings with safe default."""
+    default_name = "DC319"
+    factory = get_db_sessionmaker(request)
+    try:
+        async with factory() as dbs:
+            row = await dbs.scalar(sa.select(PortalSetting).where(PortalSetting.key == "portal"))
+    except Exception:
+        return default_name
+    if row is None or not isinstance(row.value, dict):
+        return default_name
+    name = str(row.value.get("name", "")).strip()
+    return name or default_name
