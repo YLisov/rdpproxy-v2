@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import socket
 
-
 def configure_tcp_keepalive(writer: asyncio.StreamWriter) -> None:
     """Set aggressive TCP keepalive on the transport socket."""
     sock = writer.get_extra_info("socket")

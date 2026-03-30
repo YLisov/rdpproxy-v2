@@ -101,6 +101,7 @@ RDP Relay ─────────────────────► Tar
   - bidirectional relay
 - `relay.py`: двунаправленная передача данных.
 - `tcp_utils.py`: keepalive/abort helpers.
+- `relay.py`: логика остановки изменена на `FIRST_COMPLETED` (если одна нога закрылась, принудительно закрываются обе стороны и сессия корректно финализируется).
 - `plugins/base.py`: контракт плагинов.
 - `plugins/registry.py`: chain dispatcher.
 - `plugins/mcs_patch.py`: MCS patch plugin.
@@ -219,3 +220,7 @@ services.metrics
 3. Проверить `http://<LAN_IP>:9090/admin/login`.
 4. Проверить, что LDAP доступен из контейнера portal (`socket/ldap bind test`).
 5. Только после этого изменять код.
+
+## 10) Debug runtime observations
+
+- `rdp-relay` запускается из docker image (код не смонтирован как bind-mount), поэтому изменения Python-кода для диагностики требуют `docker compose up -d --build rdp-relay`.

@@ -84,21 +84,28 @@ async def relay_bidirectional(
     ctx: SessionContext,
     kill_checker=None,
 ) -> RelayResult:
-    """Run two pipes until both directions finish, then force-close."""
+    """Run two pipes and stop relay when any direction is closed."""
     logger.info("Relay starting for %s", ctx.connection_id)
-    results = await asyncio.gather(
-        _pipe(
-            client_reader, backend_writer, "client->backend",
-            plugins=plugins, ctx=ctx, kill_checker=kill_checker,
+    tasks = [
+        asyncio.create_task(
+            _pipe(
+                client_reader, backend_writer, "client->backend",
+                plugins=plugins, ctx=ctx, kill_checker=kill_checker,
+            )
         ),
-        _pipe(
-            backend_reader, client_writer, "backend->client",
-            plugins=plugins, ctx=ctx, kill_checker=kill_checker,
+        asyncio.create_task(
+            _pipe(
+                backend_reader, client_writer, "backend->client",
+                plugins=plugins, ctx=ctx, kill_checker=kill_checker,
+            )
         ),
-        return_exceptions=True,
-    )
+    ]
+    await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+    # One closed leg means session should terminate; force-close both transports.
     abort_writer(client_writer)
     abort_writer(backend_writer)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
     bytes_to_backend = 0
     bytes_to_client = 0

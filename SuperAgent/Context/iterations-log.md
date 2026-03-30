@@ -128,3 +128,105 @@ Docker build + up → метрики пишутся в Redis и PostgreSQL. `clu
 - детальная структура модулей и ответственности;
 - потоки данных (portal/admin/relay/metrics);
 - точки расширения и known pitfalls для разработки.
+
+---
+## Итерация #8
+**Дата**: 2026-03-30
+**Запрос**: После сетевого обрыва клиент уже отключен, но сессия остается активной.
+
+### Действие 8.1
+Добавлена диагностическая утилита `src/libs/common/agent_debug.py` для записи NDJSON-событий в runtime debug-log `/opt/rdpproxy-v2/.cursor/debug-81a07f.log` (без секретов).
+
+### Действие 8.2
+Добавлена временная инструментализация в `src/services/rdp_relay/tcp_utils.py`:
+- лог наличия socket при `configure_tcp_keepalive`;
+- лог успешного применения keepalive;
+- лог ошибки применения keepalive.
+
+### Действие 8.3
+Добавлена временная инструментализация в `src/services/rdp_relay/relay.py`:
+- лог старта `relay_bidirectional` в режиме ожидания двух ног;
+- лог `timeout`-серий в `_pipe` (каждые 30 таймаутов);
+- лог завершения каждой ноги (`direction`, `reason`, `transferred`).
+
+### Действие 8.4
+Добавлена временная инструментализация в `src/services/rdp_relay/handler.py`:
+- лог возврата из relay в handler;
+- лог вызова `tracker.finish(..., status="closed")`;
+- лог вызова `tracker.finish(..., status="error")`.
+
+### Действие 8.5
+Проверка линтера для измененных файлов выполнена, ошибок не найдено.
+
+### Действие 8.6
+После первого прогона debug-файл не появился в workspace (воспроизведение было без читаемого runtime-трейса).
+Для трассировки из контейнера добавлен volume в `docker-compose.yml`:
+- `rdp-relay`: `./.cursor:/opt/rdpproxy-v2/.cursor`
+Это позволяет писать в требуемый debug-файл напрямую из контейнера.
+
+### Действие 8.7
+Выявлена причина отсутствия логов после `recreate`: контейнер `rdp-relay` работал на старом образе без свежей инструментализации.
+Выполнена пересборка и перезапуск сервиса:
+```bash
+docker compose up -d --build rdp-relay
+```
+
+### Действие 8.8
+Подготовка к чистому прогону: попытка удалить `/opt/rdpproxy-v2/.cursor/debug-81a07f.log` показала, что файл отсутствует (чистое состояние для следующего воспроизведения).
+
+### Действие 8.9
+Получены runtime-доказательства из `/opt/rdpproxy-v2/.cursor/debug-81a07f.log`:
+- keepalive применился успешно;
+- `client->backend` завершился с `reason=eof`;
+- `backend->client` ушел в длительный `timeout`-loop;
+- возврата из relay в handler не произошло.
+Вывод: зависание связано с ожиданием завершения обеих ног relay.
+
+### Действие 8.10
+Внесен целевой фикс в `src/services/rdp_relay/relay.py`:
+- вместо `asyncio.gather(...)` добавлен запуск двух задач и `asyncio.wait(..., return_when=FIRST_COMPLETED)`;
+- после завершения любой ноги принудительно закрываются оба writer (`abort_writer`);
+- затем выполняется `gather(*tasks)` для корректного сбора результатов и финализации.
+
+### Действие 8.11
+Добавлен runtime лог `first relay leg completed` для post-fix проверки.
+
+### Действие 8.12
+Проверен линтер для `relay.py`: ошибок нет.
+
+### Действие 8.13
+Пересобран и перезапущен сервис `rdp-relay` для применения фикса:
+```bash
+docker compose up -d --build rdp-relay
+```
+
+### Действие 8.14
+Перед post-fix прогоном очищен debug-лог:
+- удален файл `/opt/rdpproxy-v2/.cursor/debug-81a07f.log`.
+
+---
+## Итерация #9
+**Дата**: 2026-03-30
+**Запрос**: Удалить временную instrumentation после подтверждения фикса.
+
+### Действие 9.1
+Удалена временная runtime-инструментация из:
+- `src/services/rdp_relay/tcp_utils.py`
+- `src/services/rdp_relay/relay.py`
+- `src/services/rdp_relay/handler.py`
+
+### Действие 9.2
+Удален временный helper-файл `src/libs/common/agent_debug.py`.
+
+### Действие 9.3
+Удален временный volume для debug-логов из `docker-compose.yml`:
+- `./.cursor:/opt/rdpproxy-v2/.cursor`
+
+### Действие 9.4
+Проверка линтера по измененным файлам: ошибок нет.
+
+### Действие 9.5
+Пересобран и перезапущен `rdp-relay` после удаления instrumentation:
+```bash
+docker compose up -d --build rdp-relay
+```
