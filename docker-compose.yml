@@ -1,0 +1,126 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: rdpproxy
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: rdpproxy_v2
+    networks:
+      - rdpproxy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rdpproxy"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    networks:
+      - rdpproxy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  haproxy:
+    image: haproxy:2.9-alpine
+    ports:
+      - "8443:8443"
+      - "${LAN_IP:-0.0.0.0}:9090:9090"
+    volumes:
+      - ./deploy/haproxy:/usr/local/etc/haproxy:ro
+    networks:
+      - rdpproxy
+    depends_on:
+      portal:
+        condition: service_healthy
+      rdp-relay:
+        condition: service_started
+      admin:
+        condition: service_healthy
+    restart: unless-stopped
+
+  portal:
+    build: .
+    command: python -m services.portal.main
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    networks:
+      - rdpproxy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  rdp-relay:
+    build: .
+    command: python -m services.rdp_relay.main
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - rdpproxy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  admin:
+    build: .
+    command: python -m services.admin.main
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    networks:
+      - rdpproxy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/admin/login')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  metrics:
+    build: .
+    command: python -m services.metrics.main
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    networks:
+      - rdpproxy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  rdpproxy:
+    driver: bridge

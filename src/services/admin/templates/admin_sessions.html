@@ -1,0 +1,131 @@
+{% extends "admin_base.html" %}
+{% block title %}Активные сессии{% endblock %}
+{% block page_title %}Активные сессии{% endblock %}
+{% block extra_head %}
+  <style>
+    table { width: 100%; border-collapse: collapse; background: var(--card-bg); font-size: 13px; }
+    th, td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
+    th input, th select { width: 100%; box-sizing: border-box; font-size: 12px; padding: 4px; }
+    .muted { color: #64748b; font-size: 13px; }
+    button.kill { padding: 4px 8px; cursor: pointer; border-radius: 4px; border: 1px solid #b00020; background: #fff; color: #b00020; }
+    .card-panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  </style>
+{% endblock %}
+{% block content %}
+  <p class="muted" id="status">Загрузка…</p>
+  <p class="muted">Фильтры в строке заголовков работают по уже загруженному списку (как в Excel). Кнопка «Сброс фильтров» очищает все поля.</p>
+  <div class="card-panel" style="overflow:auto">
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th>Логин<br><input type="text" data-col="username" placeholder="фильтр"></th>
+          <th>Куда (имя)<br><input type="text" data-col="server_display" placeholder="фильтр"></th>
+          <th>Сервер<br><input type="text" data-col="server_address" placeholder="фильтр"></th>
+          <th>Порт<br><input type="text" data-col="server_port" placeholder="фильтр"></th>
+          <th>IP клиента<br><input type="text" data-col="client_ip" placeholder="фильтр"></th>
+          <th>Начало<br><input type="text" data-col="started_at" placeholder="фильтр"></th>
+          <th>Длительность</th>
+          <th>Качество<br><input type="text" data-col="connection_quality" placeholder="фильтр"></th>
+          <th>Узел</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <p><button type="button" id="resetFilters">Сброс фильтров</button></p>
+{% endblock %}
+{% block scripts %}
+<script>
+  let rawItems = [];
+  function esc(s) {
+    return String(s ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  }
+  async function api(url, opts = {}) {
+    const r = await fetch(url, { ...opts, headers: { 'Content-Type': 'application/json', ...opts.headers } });
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(b.detail || r.status);
+    return b;
+  }
+  function durationFrom(iso) {
+    if (!iso) return '—';
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return '—';
+    const sec = Math.floor((Date.now() - t) / 1000);
+    if (sec < 0) return '—';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h) return `${h}ч ${m}м ${s}с`;
+    if (m) return `${m}м ${s}с`;
+    return `${s}с`;
+  }
+  function rowMatches(item, col, q) {
+    if (!q) return true;
+    const v = item[col];
+    const s = v == null ? '' : String(v);
+    return s.toLowerCase().includes(q.toLowerCase());
+  }
+  function getFilters() {
+    const f = {};
+    document.querySelectorAll('#tbl thead input[data-col]').forEach(inp => {
+      f[inp.getAttribute('data-col')] = inp.value.trim();
+    });
+    return f;
+  }
+  function render() {
+    const f = getFilters();
+    const tb = document.querySelector('#tbl tbody');
+    tb.innerHTML = '';
+    for (const i of rawItems) {
+      let ok = true;
+      for (const [k, q] of Object.entries(f)) {
+        if (!rowMatches(i, k, q)) { ok = false; break; }
+      }
+      if (!ok) continue;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${esc(i.username)}</td>
+        <td>${esc(i.server_display)}</td>
+        <td>${esc(i.server_address)}</td>
+        <td>${esc(i.server_port)}</td>
+        <td>${esc(i.client_ip)}</td>
+        <td>${esc(i.started_at)}</td>
+        <td>${durationFrom(i.started_at)}</td>
+        <td>${esc(i.connection_quality || '—')}</td>
+        <td><code>${esc(i.instance_id)}</code></td>
+        <td><button type="button" class="kill" data-id="${esc(i.connection_id)}">Завершить</button></td>
+      `;
+      tb.appendChild(tr);
+    }
+    document.getElementById('status').textContent = 'Активных (всего): ' + rawItems.length + ', отображено: ' + tb.querySelectorAll('tr').length;
+  }
+  async function load() {
+    try {
+      rawItems = await api('/api/admin/sessions/active');
+      render();
+    } catch (e) {
+      document.getElementById('status').textContent = e.message;
+    }
+  }
+  document.querySelector('#tbl thead').addEventListener('input', () => render());
+  document.getElementById('resetFilters').addEventListener('click', () => {
+    document.querySelectorAll('#tbl thead input[data-col]').forEach(i => { i.value = ''; });
+    render();
+  });
+  document.querySelector('#tbl').addEventListener('click', async (e) => {
+    const b = e.target.closest('button.kill');
+    if (!b) return;
+    const id = b.getAttribute('data-id');
+    if (!confirm('Завершить сессию?')) return;
+    try {
+      await api('/api/admin/sessions/' + encodeURIComponent(id) + '/kill', { method: 'POST' });
+      await load();
+    } catch (err) {
+      document.getElementById('status').textContent = err.message;
+    }
+  });
+  setInterval(load, 4000);
+  load();
+</script>
+{% endblock %}

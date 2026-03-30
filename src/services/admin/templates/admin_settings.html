@@ -1,0 +1,194 @@
+{% extends "admin_base.html" %}
+{% block title %}Настройки{% endblock %}
+{% block page_title %}Настройки портала{% endblock %}
+{% block extra_head %}
+  <style>
+    .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+    .tabs button { padding: 10px 16px; border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0; background: #e2e8f0; cursor: pointer; font-size: 14px; }
+    .tabs button.active { background: var(--card-bg); border-color: var(--border); font-weight: 700; }
+    .panel { display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 0 8px 8px 8px; padding: 20px; max-width: 720px; }
+    .panel.active { display: block; }
+    .panel label { display: grid; gap: 4px; margin-bottom: 14px; font-weight: 600; font-size: 14px; }
+    .panel input, .panel select, .panel textarea { padding: 8px; border-radius: 6px; border: 1px solid var(--border); font-size: 14px; }
+    .panel textarea { min-height: 72px; font-family: inherit; }
+    .panel .actions { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .panel button.save { padding: 10px 18px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+    .hint { font-size: 13px; color: #64748b; margin-bottom: 16px; line-height: 1.45; }
+    .ok { color: #008a00; }
+    .error { color: #b00020; }
+    #status { margin-bottom: 12px; }
+  </style>
+{% endblock %}
+{% block content %}
+  <div id="status" class="hint"></div>
+  <div class="tabs">
+    <button type="button" class="active" data-tab="admin">Админка (IP)</button>
+    <button type="button" data-tab="ldap">LDAP</button>
+    <button type="button" data-tab="security">Безопасность</button>
+    <button type="button" data-tab="proxy">Прокси</button>
+  </div>
+
+  <div id="panel-admin" class="panel active">
+    <p class="hint">Глобальный список IP/CIDR, с которых разрешён вход в админ-панель. Пусто = без ограничения. Сохраняется в БД и применяется сразу.</p>
+    <label>Разрешённые IP (через запятую или с новой строки)
+      <textarea id="admin_allowed_ips" placeholder="10.0.0.0/8&#10;192.168.1.10"></textarea>
+    </label>
+    <div class="actions"><button type="button" class="save" data-save="admin_security">Сохранить</button></div>
+  </div>
+
+  <div id="panel-ldap" class="panel">
+    <p class="hint">Параметры объединяются с <code>config.yaml</code>. Пустые поля не перезаписывают существующие значения в БД. После сохранения LDAP-клиент пересоздаётся без перезапуска сервиса.</p>
+    <label>Сервер <input id="ldap_server" type="text"></label>
+    <label>Режим
+      <select id="ldap_mode">
+        <option value="plain">plain</option>
+        <option value="starttls">starttls</option>
+        <option value="ldaps">ldaps</option>
+      </select>
+    </label>
+    <label>Порт <input id="ldap_port" type="number"></label>
+    <label><input type="checkbox" id="ldap_tls_verify"> Проверять сертификат (tls_verify)</label>
+    <label>Bind DN <input id="ldap_bind_dn" type="text" autocomplete="off"></label>
+    <label>Bind password <input id="ldap_bind_password" type="password" placeholder="оставьте пустым, чтобы не менять"></label>
+    <label>Users DN <input id="ldap_users_dn" type="text"></label>
+    <label>Домен <input id="ldap_domain" type="text"></label>
+    <div class="actions">
+      <button type="button" class="save" data-save="ldap">Сохранить LDAP</button>
+      <button type="button" id="ldapCheckBtn">Проверить LDAP</button>
+    </div>
+  </div>
+
+  <div id="panel-security" class="panel">
+    <p class="hint">Часть параметров из <code>config.yaml</code>. Сохранённые здесь значения подмешиваются при следующем применении настроек (и при старте).</p>
+    <label>Попыток входа в минуту <input id="sec_login_attempts" type="number" min="1"></label>
+    <label>Блокировка (секунды) <input id="sec_login_lock" type="number" min="1"></label>
+    <label><input type="checkbox" id="sec_token_fp"> token_fingerprint_enforce</label>
+    <div class="actions"><button type="button" class="save" data-save="security">Сохранить</button></div>
+  </div>
+
+  <div id="panel-proxy" class="panel">
+    <p class="hint">Публичный хост и порт для RDP-файла. Смена listen_port обычно требует перезапуска сервиса — проверьте <code>systemctl restart rdpproxy</code>.</p>
+    <label>public_host <input id="proxy_public_host" type="text"></label>
+    <label>listen_port <input id="proxy_listen_port" type="number" min="1" max="65535"></label>
+    <div class="actions"><button type="button" class="save" data-save="proxy">Сохранить</button></div>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+  let settings = {};
+  function setStatus(t, cls) {
+    const e = document.getElementById('status');
+    e.textContent = t || '';
+    e.className = cls || 'hint';
+  }
+  async function api(url, opts = {}) {
+    const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(b.detail || ('HTTP ' + r.status));
+    return b;
+  }
+  function tab(name) {
+    document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.getAttribute('data-tab') === name));
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+  }
+  document.querySelectorAll('.tabs button').forEach(b => {
+    b.addEventListener('click', () => tab(b.getAttribute('data-tab')));
+  });
+
+  function fillForms() {
+    const as = settings.admin_security || {};
+    document.getElementById('admin_allowed_ips').value = (as.allowed_ips || []).join('\n');
+
+    const L = settings.ldap || {};
+    document.getElementById('ldap_server').value = L.server || '';
+    document.getElementById('ldap_mode').value = L.mode || 'plain';
+    document.getElementById('ldap_port').value = L.port != null ? L.port : '';
+    document.getElementById('ldap_tls_verify').checked = !!L.tls_verify;
+    document.getElementById('ldap_bind_dn').value = L.bind_dn || '';
+    document.getElementById('ldap_bind_password').value = '';
+    document.getElementById('ldap_users_dn').value = L.users_dn || '';
+    document.getElementById('ldap_domain').value = L.domain || '';
+
+    const S = settings.security || {};
+    document.getElementById('sec_login_attempts').value = S.login_attempts_per_minute != null ? S.login_attempts_per_minute : '';
+    document.getElementById('sec_login_lock').value = S.login_lock_seconds != null ? S.login_lock_seconds : '';
+    document.getElementById('sec_token_fp').checked = !!S.token_fingerprint_enforce;
+
+    const P = settings.proxy || {};
+    document.getElementById('proxy_public_host').value = P.public_host || '';
+    document.getElementById('proxy_listen_port').value = P.listen_port != null ? P.listen_port : '';
+  }
+
+  function parseIpList(raw) {
+    return raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  }
+
+  async function load() {
+    setStatus('Загрузка…');
+    try {
+      settings = await api('/api/admin/settings');
+      fillForms();
+      setStatus('Готово', 'ok');
+    } catch (e) {
+      setStatus(e.message, 'error');
+    }
+  }
+
+  document.querySelectorAll('.save').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const key = btn.getAttribute('data-save');
+      let payload = {};
+      if (key === 'admin_security') {
+        payload = { allowed_ips: parseIpList(document.getElementById('admin_allowed_ips').value) };
+      }
+      if (key === 'ldap') {
+        payload = {
+          server: document.getElementById('ldap_server').value.trim() || undefined,
+          mode: document.getElementById('ldap_mode').value || undefined,
+          port: document.getElementById('ldap_port').value ? Number(document.getElementById('ldap_port').value) : undefined,
+          tls_verify: document.getElementById('ldap_tls_verify').checked,
+          bind_dn: document.getElementById('ldap_bind_dn').value.trim() || undefined,
+          users_dn: document.getElementById('ldap_users_dn').value.trim() || undefined,
+          domain: document.getElementById('ldap_domain').value.trim() || undefined,
+        };
+        const bp = document.getElementById('ldap_bind_password').value;
+        if (bp) payload.bind_password = bp;
+      }
+      if (key === 'security') {
+        payload = {
+          login_attempts_per_minute: document.getElementById('sec_login_attempts').value
+            ? Number(document.getElementById('sec_login_attempts').value) : undefined,
+          login_lock_seconds: document.getElementById('sec_login_lock').value
+            ? Number(document.getElementById('sec_login_lock').value) : undefined,
+          token_fingerprint_enforce: document.getElementById('sec_token_fp').checked,
+        };
+      }
+      if (key === 'proxy') {
+        payload = {
+          public_host: document.getElementById('proxy_public_host').value.trim() || undefined,
+          listen_port: document.getElementById('proxy_listen_port').value
+            ? Number(document.getElementById('proxy_listen_port').value) : undefined,
+        };
+      }
+      try {
+        await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ values: { [key]: payload } }) });
+        setStatus('Сохранено', 'ok');
+        await load();
+      } catch (e) {
+        setStatus(e.message, 'error');
+      }
+    });
+  });
+
+  document.getElementById('ldapCheckBtn').addEventListener('click', async () => {
+    try {
+      await api('/api/admin/settings/ldap-check', { method: 'POST' });
+      setStatus('LDAP: OK', 'ok');
+    } catch (e) {
+      setStatus(e.message, 'error');
+    }
+  });
+
+  load();
+</script>
+{% endblock %}

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход в админ-панель</title>
+  <style>
+    :root { --bg:#f6f8fb; --fg:#111827; --card:#fff; --border:#dbe2ea; --primary:#2563eb; --err:#b00020; }
+    body { font-family: Arial, sans-serif; max-width: 400px; margin: 48px auto; padding: 0 16px; background: var(--bg); color: var(--fg); }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    form { display: grid; gap: 12px; }
+    label { display: grid; gap: 4px; font-weight: 600; }
+    input, button { padding: 10px; font-size: 14px; border-radius: 8px; border: 1px solid var(--border); }
+    button { background: var(--primary); color: #fff; border: none; cursor: pointer; }
+    .error { color: var(--err); margin-top: 8px; }
+    h1 { font-size: 1.25rem; }
+  </style>
+</head>
+<body>
+  <h1>Админ-панель</h1>
+  <div class="card">
+    <form method="post" action="/admin/login">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">
+      <label>Логин <input type="text" name="username" required autocomplete="username"></label>
+      <label>Пароль <input type="password" name="password" required autocomplete="current-password"></label>
+      <button type="submit">Войти</button>
+    </form>
+  </div>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+</body>
+</html>

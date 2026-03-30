@@ -1,0 +1,141 @@
+{% extends "admin_base.html" %}
+{% block title %}Администраторы{% endblock %}
+{% block page_title %}Локальные администраторы{% endblock %}
+{% block extra_head %}
+  <style>
+    table { width: 100%; border-collapse: collapse; background: var(--card-bg); margin-bottom: 20px; }
+    th, td { border: 1px solid var(--border); padding: 8px; text-align: left; }
+    .card-panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; max-width: 520px; }
+    label { display: grid; gap: 4px; font-weight: 600; margin-bottom: 10px; }
+    input, button { padding: 8px; border-radius: 6px; border: 1px solid var(--border); }
+    button { background: #2563eb; color: #fff; border: none; cursor: pointer; }
+    .muted { color: #64748b; font-size: 13px; }
+    .error { color: #b00020; }
+    .ok { color: #008a00; }
+  </style>
+{% endblock %}
+{% block content %}
+  <p class="muted">Учётные записи не связаны с Active Directory. Ограничение IP: список через запятую (IP или CIDR), пусто = без ограничения для пользователя.</p>
+  <div id="status" class="muted" style="margin-bottom:12px"></div>
+  <table>
+    <thead>
+      <tr>
+        <th>Логин</th>
+        <th>Активен</th>
+        <th>Смена пароля</th>
+        <th>Разрешённые IP</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <div class="card-panel">
+    <h3 style="margin-top:0">Новый администратор</h3>
+    <form id="createForm">
+      <label>Логин <input name="username" required></label>
+      <label>Пароль (мин. 8 символов) <input name="password" type="password" required minlength="8"></label>
+      <label>Разрешённые IP (через запятую, необязательно) <input name="allowed_ips" placeholder="10.0.0.0/8, 192.168.1.1"></label>
+      <button type="submit">Создать</button>
+    </form>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+  function esc(s) {
+    return String(s || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  }
+  async function api(url, opts = {}) {
+    const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+    if (r.status === 204) return null;
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(b.detail || ('HTTP ' + r.status));
+    return b;
+  }
+  function setStatus(t, cls) {
+    const e = document.getElementById('status');
+    e.textContent = t;
+    e.className = cls || 'muted';
+  }
+  async function load() {
+    const list = await api('/api/admin/admin-users');
+    document.getElementById('tbody').innerHTML = list.map(u => `
+      <tr data-id="${esc(u.id)}">
+        <td><strong>${esc(u.username)}</strong></td>
+        <td>${u.is_active ? 'да' : 'нет'}</td>
+        <td>${u.must_change_password ? 'да' : 'нет'}</td>
+        <td><input type="text" class="ips" value="${esc((u.allowed_ips || []).join(', '))}" style="width:100%;min-width:200px"></td>
+        <td>
+          <button type="button" class="btn-save" data-id="${esc(u.id)}">Сохранить IP</button>
+          <button type="button" class="btn-toggle" data-id="${esc(u.id)}">${u.is_active ? 'Отключить' : 'Включить'}</button>
+          <button type="button" class="btn-reset" data-id="${esc(u.id)}">Сброс пароля</button>
+          <button type="button" class="btn-del" data-id="${esc(u.id)}">Удалить</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+  function parseIps(s) {
+    return s.split(',').map(x => x.trim()).filter(Boolean);
+  }
+  document.getElementById('tbody').addEventListener('click', async (e) => {
+    const tr = e.target.closest('tr[data-id]');
+    if (!tr) return;
+    const id = tr.getAttribute('data-id');
+    const ipsInput = tr.querySelector('.ips');
+    try {
+      if (e.target.classList.contains('btn-save')) {
+        await api('/api/admin/admin-users/' + encodeURIComponent(id), {
+          method: 'PUT',
+          body: JSON.stringify({ allowed_ips: parseIps(ipsInput.value) }),
+        });
+        setStatus('Сохранено', 'ok');
+        await load();
+      }
+      if (e.target.classList.contains('btn-toggle')) {
+        const active = e.target.textContent === 'Отключить';
+        await api('/api/admin/admin-users/' + encodeURIComponent(id), {
+          method: 'PUT',
+          body: JSON.stringify({ is_active: !active }),
+        });
+        await load();
+      }
+      if (e.target.classList.contains('btn-reset')) {
+        const pw = prompt('Новый пароль (мин. 8 символов):');
+        if (!pw || pw.length < 8) return;
+        await api('/api/admin/admin-users/' + encodeURIComponent(id) + '/reset-password', {
+          method: 'POST',
+          body: JSON.stringify({ new_password: pw }),
+        });
+        setStatus('Пароль сброшен; пользователь должен сменить при входе', 'ok');
+      }
+      if (e.target.classList.contains('btn-del')) {
+        if (!confirm('Удалить администратора?')) return;
+        await api('/api/admin/admin-users/' + encodeURIComponent(id), { method: 'DELETE' });
+        await load();
+        setStatus('Удалено', 'ok');
+      }
+    } catch (err) {
+      setStatus(err.message, 'error');
+    }
+  });
+  document.getElementById('createForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    try {
+      await api('/api/admin/admin-users', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: fd.get('username'),
+          password: fd.get('password'),
+          allowed_ips: parseIps(String(fd.get('allowed_ips') || '')),
+        }),
+      });
+      e.target.reset();
+      setStatus('Создано', 'ok');
+      await load();
+    } catch (err) {
+      setStatus(err.message, 'error');
+    }
+  });
+  load().catch(err => setStatus(err.message, 'error'));
+</script>
+{% endblock %}

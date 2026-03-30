@@ -1,0 +1,25 @@
+#!/usr/sbin/nft -f
+# RDPProxy v2 — nftables firewall rules
+#
+# Usage:
+#   sudo nft -f /opt/rdpproxy-v2/deploy/nftables/rules.nft
+#
+# This ruleset is ADDITIVE: it creates the rdpproxy chain
+# in inet filter and jumps to it from input.
+# Adjust LAN_NET to match your local network.
+
+define LAN_NET = 10.120.0.0/24
+
+table inet rdpproxy {
+    chain input {
+        type filter hook input priority 0; policy accept;
+
+        # Port 8443: public (RDP + HTTPS portal)
+        tcp dport 8443 accept comment "RDPProxy public port"
+
+        # Port 9090: admin panel — LAN only
+        tcp dport 9090 ip saddr $LAN_NET accept comment "Admin panel LAN"
+        tcp dport 9090 ip saddr 127.0.0.0/8 accept comment "Admin panel loopback"
+        tcp dport 9090 drop comment "Admin panel blocked from WAN"
+    }
+}

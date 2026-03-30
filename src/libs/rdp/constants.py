@@ -1,0 +1,24 @@
+"""RDP protocol constants shared across tpkt, x224, mcs and credssp modules."""
+
+from __future__ import annotations
+
+TPKT_VERSION = 3
+
+PROTOCOL_SSL = 0x00000001
+PROTOCOL_HYBRID = 0x00000002
+REQUESTED_PROTOCOLS_HYBRID = 0x00000003
+
+MAX_CREDSSP_RECORD_LEN = 64 * 1024
+
+# ASN.1 tags used in TSRequest / CredSSP
+ASN1_CONTEXT_0 = 0xA0
+ASN1_CONTEXT_1 = 0xA1
+ASN1_CONTEXT_2 = 0xA2
+ASN1_CONTEXT_3 = 0xA3
+ASN1_INTEGER = 0x02
+ASN1_OCTET_STR = 0x04
+ASN1_SEQUENCE = 0x30
+
+# GCC block types
+TS_UD_CS_CORE = 0xC001
+TS_UD_SC_CORE = 0x0C01

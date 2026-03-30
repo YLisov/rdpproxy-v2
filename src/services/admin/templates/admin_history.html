@@ -1,0 +1,147 @@
+{% extends "admin_base.html" %}
+{% block title %}История сессий{% endblock %}
+{% block page_title %}История подключений{% endblock %}
+{% block extra_head %}
+  <style>
+    .filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 16px; }
+    .filters label { display: grid; gap: 4px; font-size: 13px; }
+    .filters input { padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; background: var(--card-bg); font-size: 12px; }
+    th, td { border: 1px solid var(--border); padding: 6px; text-align: left; vertical-align: top; }
+    .pager { margin-top: 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .card-panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow: auto; }
+    button { padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border); background: #fff; cursor: pointer; }
+    .muted { color: #64748b; }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="filters">
+    <label>Логин <input id="fUser" placeholder="точное совпадение"></label>
+    <label>IP клиента <input id="fIp" placeholder="точное совпадение"></label>
+    <label>Статус <input id="fStatus" placeholder="active, closed, …"></label>
+    <label>С <input id="fFrom" type="datetime-local"></label>
+    <label>По <input id="fTo" type="datetime-local"></label>
+    <label>На странице
+      <select id="fPerPage">
+        <option>25</option>
+        <option selected>50</option>
+        <option>100</option>
+        <option>200</option>
+      </select>
+    </label>
+    <button type="button" id="applyBtn">Применить</button>
+    <button type="button" id="csvBtn">CSV (текущая страница)</button>
+  </div>
+  <p class="muted" id="status"></p>
+  <div class="card-panel">
+    <table>
+      <thead>
+        <tr>
+          <th>Логин</th>
+          <th>Сервер</th>
+          <th>Адрес</th>
+          <th>Порт</th>
+          <th>IP клиента</th>
+          <th>Начало</th>
+          <th>Конец</th>
+          <th>Статус</th>
+          <th>Причина</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="pager">
+    <span id="totalSpan"></span>
+    <button type="button" id="prevBtn">Назад</button>
+    <span id="pageSpan"></span>
+    <button type="button" id="nextBtn">Вперёд</button>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+  let state = { page: 1, items: [], total: 0, perPage: 50 };
+  function esc(s) {
+    return String(s ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  }
+  async function api(url) {
+    const r = await fetch(url);
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(b.detail || r.status);
+    return b;
+  }
+  function toIsoLocal(dtLocal) {
+    if (!dtLocal) return '';
+    const d = new Date(dtLocal);
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+  }
+  function buildQuery() {
+    const p = new URLSearchParams();
+    const u = document.getElementById('fUser').value.trim();
+    const ip = document.getElementById('fIp').value.trim();
+    const st = document.getElementById('fStatus').value.trim();
+    if (u) p.append('username', u);
+    if (ip) p.append('client_ip', ip);
+    if (st) st.split(',').map(s => s.trim()).filter(Boolean).forEach(s => p.append('status', s));
+    const from = toIsoLocal(document.getElementById('fFrom').value);
+    const to = toIsoLocal(document.getElementById('fTo').value);
+    if (from) p.append('from', from);
+    if (to) p.append('to', to);
+    p.set('page', String(state.page));
+    p.set('per_page', String(state.perPage));
+    return p.toString();
+  }
+  function render() {
+    const tb = document.getElementById('tbody');
+    tb.innerHTML = state.items.map(r => `
+      <tr>
+        <td>${esc(r.username)}</td>
+        <td>${esc(r.server_display)}</td>
+        <td>${esc(r.server_address)}</td>
+        <td>${esc(r.server_port)}</td>
+        <td>${esc(r.client_ip)}</td>
+        <td>${esc(r.started_at)}</td>
+        <td>${esc(r.ended_at)}</td>
+        <td>${esc(r.status)}</td>
+        <td>${esc(r.disconnect_reason)}</td>
+      </tr>
+    `).join('');
+    document.getElementById('totalSpan').textContent = 'Всего записей: ' + state.total;
+    document.getElementById('pageSpan').textContent = 'Страница ' + state.page + ' (по ' + state.perPage + ')';
+  }
+  async function load() {
+    state.perPage = Number(document.getElementById('fPerPage').value || 50);
+    document.getElementById('status').textContent = 'Загрузка…';
+    try {
+      const q = buildQuery();
+      const data = await api('/api/admin/sessions/history' + (q ? '?' + q : ''));
+      state.items = data.items || [];
+      state.total = data.total || 0;
+      state.page = data.page || 1;
+      render();
+      document.getElementById('status').textContent = '';
+    } catch (e) {
+      document.getElementById('status').textContent = e.message;
+    }
+  }
+  document.getElementById('applyBtn').addEventListener('click', () => { state.page = 1; load(); });
+  document.getElementById('prevBtn').addEventListener('click', () => { if (state.page > 1) { state.page--; load(); } });
+  document.getElementById('nextBtn').addEventListener('click', () => {
+    const maxPage = Math.max(1, Math.ceil(state.total / state.perPage));
+    if (state.page < maxPage) { state.page++; load(); }
+  });
+  document.getElementById('csvBtn').addEventListener('click', () => {
+    const cols = ['username', 'server_display', 'server_address', 'server_port', 'client_ip', 'started_at', 'ended_at', 'status', 'disconnect_reason'];
+    const csv = [cols.join(',')].concat(
+      state.items.map(r => cols.map(c => JSON.stringify(r[c] ?? '')).join(','))
+    ).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'history-page.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+  load();
+</script>
+{% endblock %}
