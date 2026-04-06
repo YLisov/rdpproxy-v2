@@ -138,12 +138,13 @@ RDP Relay ─────────────────────► Tar
   - CredSSP backend auth (всегда запрашивает `PROTOCOL_HYBRID` 0x03 у backend)
   - bidirectional relay
   - `client_requested_protocols` из X.224 CR сохраняется в `SessionContext.extra` и пробрасывается в плагины для корректного патча MCS-ответа.
-- `relay.py`: двунаправленная передача данных; логика остановки — `FIRST_COMPLETED` (если одна нога закрылась, принудительно закрываются обе стороны).
-- `tcp_utils.py`: keepalive/abort helpers.
+- `relay.py`: двунаправленная передача данных; логика остановки — `FIRST_COMPLETED` (если одна нога закрылась, принудительно закрываются обе стороны). Оптимизации TCP throughput: условный `drain()` (только при переполнении write buffer), увеличенные `READ_CHUNK=128KB`, asyncio write buffer limits `high=512KB/low=64KB`, kill_checker вынесен в отдельную async-задачу `_kill_poller` (sync Redis GET выполняется в thread executor раз в 2 сек, не блокирует event loop).
+- `tcp_utils.py`: keepalive/abort helpers + `tune_writer_buffers()` для настройки asyncio transport water marks + увеличение `SO_SNDBUF`/`SO_RCVBUF` до 512KB + включение `TCP_NODELAY`.
 - `plugins/base.py`: контракт плагинов.
 - `plugins/registry.py`: chain dispatcher.
 - `plugins/mcs_patch.py`: MCS patch plugin; считывает `client_requested_protocols` из `ctx.extra` и передаёт в `patch_mcs_server`, чтобы поле `clientRequestedProtocols` в SC_CORE ответе бэкенда соответствовало оригинальному запросу клиента (важно для iPhone / Windows App, которые проверяют точное совпадение).
 - `plugins/session_monitor.py`: session activity/idle monitor.
+- `active_tracker.py` + `rdp_relay/main.py`: при старте relay выполняется `reconcile_stale_active_on_startup()` — закрытие зависших `status=active` сессий (DB+Redis) после рестартов, причина `relay-restart`.
 
 ##### Libs: `rdp/x224.py`
 - `extract_requested_protocols(x224_payload: bytes) -> int` — извлекает `requestedProtocols` из RDP Negotiation Request (последние 4 байта X.224 CR). Используется в `handler.py`.
@@ -157,7 +158,7 @@ RDP Relay ─────────────────────► Tar
 
 ### 3.4 Инфраструктура (`deploy`)
 
-- `haproxy/haproxy.cfg`: ingress правила.
+- `haproxy/haproxy.cfg`: ingress правила. Секция `resolvers docker` (127.0.0.11) + `resolvers docker init-addr libc,none` на серверах `portal`/`admin`/`rdp-relay` — пересоздание контейнеров не оставляет HAProxy со старым IP (иначе 503). Frontend `ft_mux`: `timeout client 24h` для long-lived RDP; backend `bk_rdp`: `timeout tunnel 24h`, `timeout server 24h`.
 - `haproxy/certs/rdp.pem`: runtime cert bundle (не коммитится).
 - `nftables/rules.nft`: ограничение доступа к `9090`.
 - `scripts/gen-dev-cert.sh`: dev-сертификат.
@@ -265,6 +266,14 @@ services.metrics
 4. Проверить, что LDAP доступен из контейнера portal (`socket/ldap bind test`).
 5. Только после этого изменять код.
 
-## 10) Debug runtime observations
+## 10) TCP throughput оптимизации relay
+
+- `docker-compose.yml`: контейнеры `rdp-relay` и `haproxy` включают `net.ipv4.tcp_congestion_control=bbr`; для `rdp-relay` также заданы `net.ipv4.tcp_rmem/wmem` (default=256KB, max=16MB). На хосте в `/etc/sysctl.conf`: `net.core.rmem_max=16MB`, `net.core.wmem_max=16MB`, `net.core.default_qdisc=fq`, `net.ipv4.tcp_congestion_control=bbr`.
+- `tcp_utils.py`: SO_SNDBUF/SO_RCVBUF = 512KB, TCP_NODELAY включён.
+- `relay.py`: READ_CHUNK = 128KB, asyncio write buffer high=512KB/low=64KB, drain() вызывается только при переполнении буфера (условный drain). kill_checker вынесен из hot-path в отдельный async-поток с интервалом 2 сек.
+- `rdp_file.py`: `networkautodetect:i:0` — отключена попытка UDP multitransport (прокси TCP-only), `connection type:i:6` — LAN hint для клиента.
+- `haproxy.cfg`: `resolvers docker`; `ft_mux` — `timeout client 24h`; `bk_rdp` — `timeout tunnel` + `timeout server` 24h; бэкенды с динамическим DNS.
+
+## 11) Debug runtime observations
 
 - `rdp-relay` запускается из docker image (код не смонтирован как bind-mount), поэтому изменения Python-кода для диагностики требуют `docker compose up -d --build rdp-relay`.

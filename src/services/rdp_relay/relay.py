@@ -6,14 +6,17 @@ import asyncio
 import logging
 import ssl
 from dataclasses import dataclass
+from typing import Callable
 
 from services.rdp_relay.plugins.base import SessionContext
 from services.rdp_relay.plugins.registry import PluginRegistry
-from services.rdp_relay.tcp_utils import abort_writer
+from services.rdp_relay.tcp_utils import abort_writer, tune_writer_buffers
 
 logger = logging.getLogger("rdpproxy.relay.pipe")
-READ_CHUNK = 65536
-POLL_TIMEOUT = 1.0
+READ_CHUNK = 131072
+WRITE_HIGH_WATER = 512 * 1024
+WRITE_LOW_WATER = 64 * 1024
+KILL_CHECK_INTERVAL = 2.0
 
 
 @dataclass(frozen=True)
@@ -30,21 +33,19 @@ async def _pipe(
     *,
     plugins: PluginRegistry,
     ctx: SessionContext,
-    kill_checker=None,
+    kill_event: asyncio.Event | None = None,
 ) -> LegResult:
     """One-way data pump with plugin transformation hooks."""
+    tune_writer_buffers(writer, WRITE_HIGH_WATER, WRITE_LOW_WATER)
     transferred = 0
     reason = "eof"
     is_client_to_backend = direction == "client->backend"
     try:
         while True:
-            if kill_checker is not None and kill_checker():
+            if kill_event is not None and kill_event.is_set():
                 reason = "killed"
                 break
-            try:
-                data = await asyncio.wait_for(reader.read(READ_CHUNK), timeout=POLL_TIMEOUT)
-            except asyncio.TimeoutError:
-                continue
+            data = await reader.read(READ_CHUNK)
             if not data:
                 break
             if is_client_to_backend:
@@ -53,7 +54,8 @@ async def _pipe(
                 data = await plugins.on_backend_packet(data, ctx)
             transferred += len(data)
             writer.write(data)
-            await writer.drain()
+            if writer.transport.get_write_buffer_size() >= WRITE_HIGH_WATER:
+                await writer.drain()
     except asyncio.IncompleteReadError:
         reason = "incomplete-read"
     except ssl.SSLError as e:
@@ -74,6 +76,24 @@ class RelayResult:
     legs: list[LegResult]
 
 
+async def _kill_poller(
+    check_fn: Callable[[], bool],
+    kill_event: asyncio.Event,
+    interval: float = KILL_CHECK_INTERVAL,
+) -> None:
+    """Periodically run a sync Redis check in a thread, set event on kill."""
+    loop = asyncio.get_running_loop()
+    try:
+        while not kill_event.is_set():
+            killed = await loop.run_in_executor(None, check_fn)
+            if killed:
+                kill_event.set()
+                return
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        pass
+
+
 async def relay_bidirectional(
     client_reader: asyncio.StreamReader,
     client_writer: asyncio.StreamWriter,
@@ -82,25 +102,36 @@ async def relay_bidirectional(
     *,
     plugins: PluginRegistry,
     ctx: SessionContext,
-    kill_checker=None,
+    kill_checker: Callable[[], bool] | None = None,
 ) -> RelayResult:
     """Run two pipes and stop relay when any direction is closed."""
     logger.info("Relay starting for %s", ctx.connection_id)
+    kill_event: asyncio.Event | None = None
+    poller_task: asyncio.Task | None = None
+    if kill_checker is not None:
+        kill_event = asyncio.Event()
+        poller_task = asyncio.create_task(_kill_poller(kill_checker, kill_event))
+
     tasks = [
         asyncio.create_task(
             _pipe(
                 client_reader, backend_writer, "client->backend",
-                plugins=plugins, ctx=ctx, kill_checker=kill_checker,
+                plugins=plugins, ctx=ctx, kill_event=kill_event,
             )
         ),
         asyncio.create_task(
             _pipe(
                 backend_reader, client_writer, "backend->client",
-                plugins=plugins, ctx=ctx, kill_checker=kill_checker,
+                plugins=plugins, ctx=ctx, kill_event=kill_event,
             )
         ),
     ]
     done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+    if kill_event is not None:
+        kill_event.set()
+    if poller_task is not None:
+        poller_task.cancel()
 
     abort_writer(client_writer)
     abort_writer(backend_writer)

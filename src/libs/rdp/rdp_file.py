@@ -86,8 +86,10 @@ async def build_rdp_content(
             if binds and not binds.intersection(group_set):
                 continue
             merged.update(t.params or {})
-    merged["networkautodetect"] = 1
+    merged["networkautodetect"] = 0
     merged["bandwidthautodetect"] = 1
+    merged["connection type"] = 6
+    merged["use redirection server name"] = 0
     merged["full address"] = f"{proxy_host}:{proxy_port}"
     merged["loadbalanceinfo"] = token
     merged["negotiate security layer"] = 1

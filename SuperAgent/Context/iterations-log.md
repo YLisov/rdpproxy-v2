@@ -511,3 +511,127 @@ curl -k -I https://127.0.0.1:8443/
 
 ### Действие 18.7
 Удалена вся debug-инструментация из `handler.py`, `relay.py`, `mcs.py`. Удалён debug volume из `docker-compose.yml`. Пересобран и перезапущен `rdp-relay`.
+
+---
+## Итерация #19
+**Время начала**: 2026-04-06 16:00
+**Запрос**: Оптимизация TCP throughput RDP relay — диагностика показала торможение из-за stop-and-wait drain, блокирующего sync Redis, малых TCP буферов
+**Ответ**: Реализованы все 6 пунктов оптимизации
+
+### Действие 19.1
+**Описание**: relay.py — замена stop-and-wait drain на условный drain + увеличение буферов
+**Изменения в `src/services/rdp_relay/relay.py`**:
+- `READ_CHUNK`: 65536 → 131072 (128KB)
+- Добавлены константы `WRITE_HIGH_WATER=512KB`, `WRITE_LOW_WATER=64KB`, `KILL_CHECK_INTERVAL=2.0`
+- `_pipe()`: убран `asyncio.wait_for(reader.read(), timeout=POLL_TIMEOUT)` — заменён на прямой `reader.read(READ_CHUNK)`, что убирает 1-секундные таймауты при idle
+- `drain()` вызывается только если `writer.transport.get_write_buffer_size() >= WRITE_HIGH_WATER` (условный drain вместо stop-and-wait)
+- `tune_writer_buffers()` вызывается в начале `_pipe()` для поднятия asyncio transport water marks
+- Параметр `kill_checker` заменён на `kill_event: asyncio.Event`
+- Добавлена `_kill_poller()` — отдельная coroutine, которая запускает sync Redis GET в `run_in_executor` раз в 2 сек, не блокируя event loop
+
+### Действие 19.2
+**Описание**: tcp_utils.py — увеличение socket буферов, TCP_NODELAY, tune_writer_buffers
+**Изменения в `src/services/rdp_relay/tcp_utils.py`**:
+- `configure_tcp_keepalive()`: добавлено `SO_SNDBUF=512KB`, `SO_RCVBUF=512KB`, `TCP_NODELAY=1`
+- Добавлена функция `tune_writer_buffers(writer, high, low)` для настройки asyncio transport write-buffer water marks
+
+### Действие 19.3
+**Описание**: docker-compose.yml — sysctls для контейнера rdp-relay
+**Изменения в `docker-compose.yml`**:
+- Контейнер `rdp-relay`: добавлена секция `sysctls` — `net.core.rmem_max=16MB`, `net.core.wmem_max=16MB`, `net.ipv4.tcp_rmem/wmem` max 16MB, `net.core.rmem_default/wmem_default=256KB`
+
+### Действие 19.4
+**Описание**: haproxy.cfg — корректные таймауты для long-lived RDP TCP
+**Изменения в `deploy/haproxy/haproxy.cfg`**:
+- `bk_rdp`: добавлены `timeout tunnel 24h` и `timeout client 24h` (ранее client наследовал 30s из defaults, что могло вызывать разрывы при idle)
+
+### Действие 19.5
+**Описание**: rdp_file.py — отключение UDP-пробы, TCP-only hint
+**Изменения в `src/libs/rdp/rdp_file.py`**:
+- `networkautodetect`: 1 → 0 (отключает попытку UDP multitransport, которую прокси не поддерживает — убирает 2-3 сек фолбек)
+- Добавлен `connection type:i:6` (LAN, максимальная скорость) и `use redirection server name:i:0`
+
+### Действие 19.6
+**Описание**: Хостовые sysctls + docker-compose sysctls fix
+- Убраны `net.core.rmem_default`/`wmem_default` из docker-compose (не namespaced, не поддерживаются в контейнере)
+- Оставлены `net.ipv4.tcp_rmem` / `net.ipv4.tcp_wmem` с default 256KB и max 16MB
+- Поднят хостовой `net.core.rmem_max`/`wmem_max` до 16MB через `sysctl -w` + `/etc/sysctl.conf`
+- Пересобран и перезапущен `rdp-relay`
+- Верификация: SO_SNDBUF 512KB→1MB (ядро удваивает), TCP_NODELAY=1, tcp_rmem/wmem max=16MB
+- Все контейнеры Running/Healthy
+
+---
+## Итерация #20
+**Время начала**: 2026-04-06
+**Запрос**: 503 на портале после изменений
+**Ответ**: HAProxy держал устаревший IP `portal`/`admin` после пересоздания контейнеров; добавлен runtime DNS через Docker 127.0.0.11
+
+### Действие 20.1
+**Описание**: `deploy/haproxy/haproxy.cfg` — секция `resolvers docker` (nameserver 127.0.0.11:53, `hold obsolete 0s`), на серверах `portal`, `admin`, `rdp-relay` добавлено `resolvers docker init-addr libc,none` для периодического пересоздания адресов.
+
+### Действие 20.2
+**Описание**: `timeout client 24h` перенесён с backend `bk_rdp` на frontend `ft_mux` (в backend `timeout client` игнорировался — предупреждение HAProxy). С `bk_rdp` удалён неэффективный `timeout client 24h`.
+
+### Действие 20.3
+Выполнен `docker compose restart haproxy`; проверка `http://portal:8001/health` из контейнера HAProxy — OK.
+
+---
+## Итерация #21
+**Время начала**: 2026-04-06
+**Запрос**: Включить BBR 3 сразу для снижения лагов при большой перерисовке
+**Ответ**: В ядре доступен `bbr` (отдельного `bbr3` нет); включён `bbr` на хосте и в netns сервисов `haproxy`/`rdp-relay`, настройки сделаны персистентными
+
+### Действие 21.1
+Проверена поддержка congestion control:
+- до загрузки модуля: `reno cubic`;
+- после `modprobe tcp_bbr`: `reno cubic bbr`;
+- отдельного `bbr3` нет в доступных алгоритмах ядра.
+
+### Действие 21.2
+Runtime-переключение на хосте:
+- `net.core.default_qdisc=fq`;
+- `net.ipv4.tcp_congestion_control=bbr`.
+
+### Действие 21.3
+Runtime-переключение в active netns контейнеров:
+- `haproxy`: `tcp_congestion_control=bbr`;
+- `rdp-relay`: `tcp_congestion_control=bbr`.
+
+### Действие 21.4
+Персистентные настройки:
+- `docker-compose.yml`: добавлен `net.ipv4.tcp_congestion_control=bbr` в `sysctls` для `haproxy` и `rdp-relay`;
+- `/etc/sysctl.conf`: добавлены `net.core.default_qdisc=fq`, `net.ipv4.tcp_congestion_control=bbr`.
+
+### Действие 21.5
+Применение и проверка:
+- выполнен `docker compose up -d haproxy rdp-relay`;
+- проверка через `nsenter`: в обоих netns `tcp_congestion_control=bbr`;
+- контейнеры в статусе `Up`, `portal/admin` healthy.
+
+---
+## Итерация #22
+**Время начала**: 2026-04-06
+**Запрос**: После включения BBR предыдущая сессия зависла
+**Ответ**: Это не возврат старого бага relay; зависание вызвано рестартом `haproxy/rdp-relay` во время активной сессии, остался stale `active` хвост в Redis/DB
+
+### Действие 22.1
+Проведена диагностика:
+- В Redis найдены две active-сессии (`7ace...` и `857d...`), при этом в живых сокетах была только одна текущая;
+- В PostgreSQL `connection_history` у `7ace...` оставался `status='active'` с пустым `ended_at`;
+- Подтверждён сценарий stale-state после рестарта сервисов на живом трафике.
+
+### Действие 22.2
+Ручная консолидация состояния:
+- удалён ключ `rdp:active:node-1:7ace...` из Redis;
+- в PostgreSQL сессия `7ace...` закрыта как `status='error'`, `disconnect_reason='relay-restart'`.
+
+### Действие 22.3
+Добавлена защита от повторения:
+- `src/libs/redis_store/active_tracker.py`: метод `reconcile_stale_active_on_startup()`;
+- `src/services/rdp_relay/main.py`: вызов reconcile перед запуском listener.
+
+### Действие 22.4
+Применение:
+- пересобран и перезапущен `rdp-relay`;
+- подтверждение в логе: `Cleaned stale active sessions on startup: db=1 redis=1`.
+

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,6 +12,8 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from db.models.history import ConnectionEvent, ConnectionHistory
+
+logger = logging.getLogger("rdpproxy.relay.tracker")
 
 
 @dataclass
@@ -86,3 +89,37 @@ class ConnectionTracker:
                 await dbs.commit()
         if self._redis is not None:
             self._redis.delete(f"rdp:active:{self._instance_id}:{connection_id}")
+
+    async def reconcile_stale_active_on_startup(self) -> tuple[int, int]:
+        """Mark leftover active sessions as error after relay restart."""
+        db_updated = 0
+        redis_deleted = 0
+
+        if self._db_factory is not None:
+            async with self._db_factory() as dbs:
+                result = await dbs.execute(
+                    sa.update(ConnectionHistory)
+                    .where(
+                        ConnectionHistory.instance_id == self._instance_id,
+                        ConnectionHistory.status == "active",
+                        ConnectionHistory.ended_at.is_(None),
+                    )
+                    .values(
+                        ended_at=datetime.now(timezone.utc),
+                        status="error",
+                        disconnect_reason="relay-restart",
+                    )
+                )
+                await dbs.commit()
+                db_updated = int(result.rowcount or 0)
+
+        if self._redis is not None:
+            prefix = f"rdp:active:{self._instance_id}:"
+            try:
+                for key in self._redis.scan_iter(match=f"{prefix}*"):
+                    self._redis.delete(key)
+                    redis_deleted += 1
+            except Exception:
+                logger.exception("Failed to cleanup stale redis active sessions")
+
+        return db_updated, redis_deleted

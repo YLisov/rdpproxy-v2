@@ -46,6 +46,8 @@ services:
         condition: service_started
       admin:
         condition: service_healthy
+    sysctls:
+      - net.ipv4.tcp_congestion_control=bbr
     restart: unless-stopped
 
   portal:
@@ -81,6 +83,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    sysctls:
+      - net.ipv4.tcp_congestion_control=bbr
+      - net.ipv4.tcp_rmem=4096 262144 16777216
+      - net.ipv4.tcp_wmem=4096 262144 16777216
     restart: unless-stopped
 
   admin:

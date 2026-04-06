@@ -36,6 +36,13 @@ async def run_server() -> None:
         redis_client=redis_client,
         instance_id=config.instance.id,
     )
+    stale_db, stale_redis = await tracker.reconcile_stale_active_on_startup()
+    if stale_db or stale_redis:
+        logger.warning(
+            "Cleaned stale active sessions on startup: db=%d redis=%d",
+            stale_db,
+            stale_redis,
+        )
 
     plugins = PluginRegistry([
         McsPatchPlugin(),
