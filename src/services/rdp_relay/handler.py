@@ -134,6 +134,8 @@ class RdpConnectionHandler:
             configure_tcp_keepalive(backend.writer)
             await self._tracker.event(tracked_cid, "credssp_authenticated")
 
+            client_sock = client_writer.get_extra_info("socket")
+            backend_sock = backend.writer.get_extra_info("socket")
             ctx = SessionContext(
                 connection_id=tracked_cid,
                 username=session.username,
@@ -141,7 +143,11 @@ class RdpConnectionHandler:
                 target_host=resolved_host,
                 target_port=session.target_port,
                 instance_id=self._cfg.instance.id,
-                extra={"client_requested_protocols": client_requested_protocols},
+                extra={
+                    "client_requested_protocols": client_requested_protocols,
+                    "client_socket": client_sock,
+                    "backend_socket": backend_sock,
+                },
             )
             await self._plugins.on_session_start(ctx)
 

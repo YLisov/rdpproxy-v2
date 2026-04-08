@@ -15,6 +15,7 @@ from redis_store.active_tracker import ConnectionTracker
 from redis_store.client import create_redis_client
 from redis_store.sessions import SessionStore
 from services.rdp_relay.handler import RdpConnectionHandler
+from services.rdp_relay.plugins.connection_quality import ConnectionQualityPlugin
 from services.rdp_relay.plugins.mcs_patch import McsPatchPlugin
 from services.rdp_relay.plugins.registry import PluginRegistry
 from services.rdp_relay.plugins.session_monitor import SessionMonitorPlugin
@@ -47,6 +48,7 @@ async def run_server() -> None:
     plugins = PluginRegistry([
         McsPatchPlugin(),
         SessionMonitorPlugin(),
+        ConnectionQualityPlugin(redis_client=redis_client, instance_id=config.instance.id),
     ])
 
     handler = RdpConnectionHandler(

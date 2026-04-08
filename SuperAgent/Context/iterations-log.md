@@ -635,3 +635,68 @@ Runtime-переключение в active netns контейнеров:
 - пересобран и перезапущен `rdp-relay`;
 - подтверждение в логе: `Cleaned stale active sessions on startup: db=1 redis=1`.
 
+---
+## Итерация #23
+**Дата**: 2026-04-08
+**Запрос**: Добавить мониторинг качества TCP-соединения для активных RDP-сессий через Linux TCP_INFO и отображение метрик в Admin API.
+
+### Действие 23.1
+**Описание**: Добавлены GCC-константы в `src/libs/rdp/constants.py`:
+- `TS_UD_CS_MSGCHANNEL = 0xC006`
+- `TS_UD_CS_MULTITRANSPORT = 0xC00A`
+- `TS_UD_SC_MULTITRANSPORT = 0x0C08`
+
+### Действие 23.2
+**Описание**: Создан новый плагин `src/services/rdp_relay/plugins/connection_quality.py`:
+- Ctypes-структура `_TcpInfo` (31 поле из `struct tcp_info` Linux)
+- Датакласс `QualitySnapshot` (rtt_ms, rtt_var_ms, jitter_ms, retransmits, total_retrans, lost, cwnd, rating)
+- `ConnectionQualityPlugin(RdpPlugin)`:
+  - `on_session_start`: достаёт сокеты из `ctx.extra`, запускает фоновую задачу `_monitor_loop`
+  - `on_session_end`: отменяет задачу
+  - `_monitor_loop`: первый замер через 2 сек, затем каждые 5 сек
+  - `_sample()`: читает TCP_INFO с обоих сокетов, считает суммарный RTT и jitter по скользящему окну 20 замеров
+  - Рейтинг: excellent (<20ms RTT, <5ms jitter, 0 retrans), good (<50ms, <15ms, <5), fair (<150ms, <40ms), poor
+  - `_publish()`: обновляет существующий JSON в `rdp:active:{instance_id}:{connection_id}` полями `connection_quality` и `quality_detail`
+
+### Действие 23.3
+**Описание**: В `src/services/rdp_relay/handler.py` добавлена передача raw socket objects в `SessionContext.extra`:
+- `client_socket = client_writer.get_extra_info("socket")`
+- `backend_socket = backend.writer.get_extra_info("socket")`
+
+### Действие 23.4
+**Описание**: В `src/services/rdp_relay/main.py` импортирован и зарегистрирован `ConnectionQualityPlugin`:
+- `ConnectionQualityPlugin(redis_client=redis_client, instance_id=config.instance.id)`
+
+### Действие 23.5
+**Описание**: В `src/services/admin/routes/sessions.py` добавлена модель и парсинг quality_detail:
+- Pydantic-модель `QualityDetail` (rtt_ms, rtt_var_ms, jitter_ms, retransmits, total_retrans, lost, cwnd, rating)
+- Поле `quality_detail: QualityDetail | None = None` в `ActiveSessionOut`
+- Парсинг из Redis: `data.get("quality_detail")` → `QualityDetail(**qd_raw)`
+
+### Действие 23.6
+**Описание**: Пересобран и перезапущен контейнер `rdp-relay`:
+```bash
+docker compose up -d --build rdp-relay
+```
+Результат: плагин `connection_quality` зарегистрирован, сервис работает.
+
+### Действие 23.7
+**Описание**: Диагностика и исправление некорректных метрик (все сессии показывали "poor")
+
+**Причина 1 — сдвиг структуры `_TcpInfo`**:
+В ядре 6.8 (`linux/tcp.h`) поле `tcpi_last_ack_recv` присутствует между `tcpi_last_data_recv` и `tcpi_pmtu`. Оригинальная ctypes-структура (31 поле) его не учитывала, из-за чего все поля после offset 52 были сдвинуты на 4 байта. Плагин читал `rcv_ssthresh` вместо `rtt` (245-496ms вместо реальных 6-21ms) и `rcv_space` вместо `total_retrans`.
+
+**Исправление**: добавлено поле `tcpi_last_ack_recv` (32 поля, 104 байта). Верификация через `ss -ti` и raw-дамп getsockopt подтвердила корректность.
+
+**Причина 2 — кумулятивный `total_retrans` в рейтинге**:
+Рейтинг использовал `total_retrans` (lifetime counter), который неизбежно рос до десятков тысяч. Заменён на дельту ретрансмиссий между замерами (`retrans_per_interval`).
+
+**Причина 3 — слишком жёсткие пороги RTT**:
+Измерение суммирует два плеча (клиент→прокси + прокси→бэкенд). Пороги увеличены:
+- excellent: RTT < 50ms, jitter < 10ms, retrans/interval = 0
+- good: RTT < 150ms, jitter < 30ms, retrans/interval < 10
+- fair: RTT < 400ms, jitter < 80ms
+- poor: остальное
+
+**Результат**: сессия с реальным RTT ~19ms корректно показывает "excellent".
+

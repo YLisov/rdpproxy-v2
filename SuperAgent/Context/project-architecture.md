@@ -119,7 +119,7 @@ RDP Relay ─────────────────────► Tar
 - `app.py`: app factory + HTML endpoints.
 - `routes/auth.py`: admin login/logout/change password.
 - `routes/servers.py`, `templates.py`: CRUD серверов и шаблонов.
-- `routes/sessions.py`: активные/исторические сессии, kill.
+- `routes/sessions.py`: активные/исторические сессии, kill. Модель `QualityDetail` (rtt_ms, rtt_var_ms, jitter_ms, retransmits, total_retrans, lost, cwnd, rating) и поле `quality_detail` в `ActiveSessionOut` — данные парсятся из Redis для эндпоинта `GET /api/admin/sessions/active`.
 - `routes/admin_users.py`: управление локальными админ-аккаунтами.
 - `routes/ad_groups.py`: резолвинг/обновление AD-групп.
 - `routes/settings.py`: системные настройки.
@@ -138,12 +138,14 @@ RDP Relay ─────────────────────► Tar
   - CredSSP backend auth (всегда запрашивает `PROTOCOL_HYBRID` 0x03 у backend)
   - bidirectional relay
   - `client_requested_protocols` из X.224 CR сохраняется в `SessionContext.extra` и пробрасывается в плагины для корректного патча MCS-ответа.
+  - `client_socket` и `backend_socket` (raw `socket.socket`) передаются в `SessionContext.extra` для плагина `ConnectionQualityPlugin`.
 - `relay.py`: двунаправленная передача данных; логика остановки — `FIRST_COMPLETED` (если одна нога закрылась, принудительно закрываются обе стороны). Оптимизации TCP throughput: условный `drain()` (только при переполнении write buffer), увеличенные `READ_CHUNK=128KB`, asyncio write buffer limits `high=512KB/low=64KB`, kill_checker вынесен в отдельную async-задачу `_kill_poller` (sync Redis GET выполняется в thread executor раз в 2 сек, не блокирует event loop).
 - `tcp_utils.py`: keepalive/abort helpers + `tune_writer_buffers()` для настройки asyncio transport water marks + увеличение `SO_SNDBUF`/`SO_RCVBUF` до 512KB + включение `TCP_NODELAY`.
 - `plugins/base.py`: контракт плагинов.
 - `plugins/registry.py`: chain dispatcher.
 - `plugins/mcs_patch.py`: MCS patch plugin; считывает `client_requested_protocols` из `ctx.extra` и передаёт в `patch_mcs_server`, чтобы поле `clientRequestedProtocols` в SC_CORE ответе бэкенда соответствовало оригинальному запросу клиента (важно для iPhone / Windows App, которые проверяют точное совпадение).
 - `plugins/session_monitor.py`: session activity/idle monitor.
+- `plugins/connection_quality.py`: мониторинг качества TCP-соединения через Linux `TCP_INFO`. Содержит ctypes-структуру `_TcpInfo` (31 поле из `struct tcp_info`), датакласс `QualitySnapshot` (rtt_ms, rtt_var_ms, jitter_ms, retransmits, total_retrans, lost, cwnd, rating). Плагин `ConnectionQualityPlugin` запускает фоновую asyncio-задачу при `on_session_start`, которая каждые 5 секунд читает `TCP_INFO` с обоих сокетов (client + backend), считает суммарный RTT и jitter по скользящему окну 20 замеров, определяет рейтинг (excellent/good/fair/poor) и публикует метрики в Redis-ключ `rdp:active:{instance_id}:{connection_id}`.
 - `active_tracker.py` + `rdp_relay/main.py`: при старте relay выполняется `reconcile_stale_active_on_startup()` — закрытие зависших `status=active` сессий (DB+Redis) после рестартов, причина `relay-restart`.
 
 ##### Libs: `rdp/x224.py`

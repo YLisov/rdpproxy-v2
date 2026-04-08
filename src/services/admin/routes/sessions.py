@@ -17,6 +17,17 @@ from services.admin.dependencies import get_config, get_db_sessionmaker, get_ses
 router = APIRouter(prefix="/api/admin/sessions", tags=["admin-sessions"])
 
 
+class QualityDetail(BaseModel):
+    rtt_ms: float | None = None
+    rtt_var_ms: float | None = None
+    jitter_ms: float | None = None
+    retransmits: int | None = None
+    total_retrans: int | None = None
+    lost: int | None = None
+    cwnd: int | None = None
+    rating: str | None = None
+
+
 class ActiveSessionOut(BaseModel):
     connection_id: str
     instance_id: str
@@ -27,6 +38,7 @@ class ActiveSessionOut(BaseModel):
     client_ip: str | None = None
     started_at: str | None = None
     connection_quality: str | None = None
+    quality_detail: QualityDetail | None = None
 
 
 async def _db(request: Request) -> AsyncSession:
@@ -56,6 +68,8 @@ async def active_sessions(request: Request, _: AdminWebSessionData = Depends(req
                 data = json.loads(raw)
             except Exception:
                 data = {}
+        qd_raw = data.get("quality_detail")
+        qd = QualityDetail(**qd_raw) if isinstance(qd_raw, dict) else None
         out.append(
             ActiveSessionOut(
                 instance_id=data.get("instance_id") or instance_id,
@@ -67,6 +81,7 @@ async def active_sessions(request: Request, _: AdminWebSessionData = Depends(req
                 client_ip=data.get("client_ip"),
                 started_at=data.get("started_at"),
                 connection_quality=data.get("connection_quality"),
+                quality_detail=qd,
             )
         )
     return out
