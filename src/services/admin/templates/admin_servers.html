@@ -6,14 +6,18 @@
     .layout { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; }
     table { width: 100%; border-collapse: collapse; background: var(--card-bg); }
     th, td { border: 1px solid var(--border); padding: 8px; text-align: left; vertical-align: top; }
-    tr.dragging { opacity: 0.5; }
+    tr.dragging { opacity: 0.4; }
+    tr[draggable="true"] { cursor: default; }
     .drag-handle { cursor: grab; user-select: none; color: #64748b; font-size: 18px; width: 28px; text-align: center; }
     .muted { color: #64748b; font-size: 12px; }
     .controls { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
-    .btn { padding: 8px 12px; cursor: pointer; border-radius: 6px; border: 1px solid var(--border); background: #fff; }
+    .btn { padding: 8px 12px; cursor: pointer; border-radius: 6px; border: 1px solid var(--border); background: #fff; font-size: 13px; }
     .btn-danger { color: #fff; background: #b00020; border: none; }
+    .btn-sm { padding: 4px 8px; font-size: 12px; }
     form#serverForm { display: grid; gap: 10px; }
     label { display: grid; gap: 4px; font-weight: 600; }
+    label.inline-check { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+    label.inline-check input[type="checkbox"] { width: 18px; height: 18px; margin: 0; }
     input, select, button { padding: 8px; font-size: 14px; border-radius: 6px; border: 1px solid var(--border); }
     .chips { display: flex; flex-wrap: wrap; gap: 6px; }
     .chip { border: 1px solid #888; border-radius: 12px; padding: 2px 8px; font-size: 12px; }
@@ -34,13 +38,13 @@
         <button type="button" class="btn" id="refreshBtn">Обновить список</button>
         <button type="button" class="btn" id="newBtn">Новый сервер</button>
       </div>
-      <p class="muted" style="margin-top:0">Перетащите строки за ⋮⋮ для изменения порядка в портале.</p>
+      <p class="muted" style="margin-top:0">Перетащите строки для изменения порядка в портале.</p>
       <table>
         <thead>
           <tr>
             <th style="width:36px"></th>
-            <th>Tech name</th>
             <th>Название</th>
+            <th>Tech name</th>
             <th>Адрес</th>
             <th>Видимость (группы AD)</th>
             <th>Действия</th>
@@ -53,22 +57,24 @@
       <h2 id="formTitle" style="margin-top:0">Новый сервер</h2>
       <form id="serverForm">
         <input type="hidden" id="serverId">
-        <label>Tech name
-          <input id="techName" required maxlength="64" placeholder="accounting">
+        <label class="inline-check">
+          <input id="isEnabled" type="checkbox" checked>
+          Активность
         </label>
         <label>Название для портала
           <input id="displayName" required maxlength="255" placeholder="Бухгалтерия">
         </label>
+        <label>Tech name
+          <input id="techName" required maxlength="64" placeholder="accounting">
+        </label>
         <label>Адрес (IP/hostname или IP:port)
           <input id="address" required maxlength="255" placeholder="10.100.19.13 или rdp-01.example.com:3389">
         </label>
-        <label>Порядок сортировки
-          <input id="sortOrder" type="number" value="0">
-        </label>
-        <label>
-          <input id="isEnabled" type="checkbox" checked>
-          Сервер включен
-        </label>
+        <div style="display:none">
+          <label>Порядок сортировки
+            <input id="sortOrder" type="number" value="0">
+          </label>
+        </div>
         <div class="group-picker">
           <div><strong>Группы AD</strong></div>
           <input id="groupSearch" placeholder="Введите часть CN (минимум 2 символа)">
@@ -77,8 +83,6 @@
         </div>
         <div class="controls">
           <button class="btn" type="submit">Сохранить</button>
-          <button class="btn" type="button" id="cloneBtn">Копия в форму</button>
-          <button class="btn btn-danger" type="button" id="deleteBtn">Удалить</button>
           <button class="btn" type="button" id="resetBtn">Сбросить</button>
         </div>
       </form>
@@ -122,28 +126,28 @@
     for (const s of state.servers) {
       const tr = document.createElement('tr');
       tr.setAttribute('data-id', s.id);
+      tr.setAttribute('draggable', 'true');
       tr.innerHTML = `
-        <td class="drag-handle" draggable="true" title="Перетащить">⋮⋮</td>
-        <td><code>${escapeHtml(s.tech_name)}</code><br><span class="muted">${s.is_enabled ? 'enabled' : 'disabled'}</span></td>
+        <td class="drag-handle" title="Перетащить">⋮⋮</td>
         <td>${escapeHtml(s.display_name)}</td>
+        <td><code>${escapeHtml(s.tech_name)}</code><br><span class="muted">${s.is_enabled ? 'enabled' : 'disabled'}</span></td>
         <td>${escapeHtml(s.port === 3389 ? s.address : `${s.address}:${s.port}`)}</td>
         <td>${(s.group_details || []).map(g => `<div class="chip">${escapeHtml(g.cn)}</div>`).join('')}</td>
         <td>
-          <button type="button" class="btn" data-action="edit" data-id="${escapeHtml(s.id)}">Изменить</button>
-          <button type="button" class="btn" data-action="clone" data-id="${escapeHtml(s.id)}">Копия</button>
+          <button type="button" class="btn btn-sm" data-action="edit" data-id="${escapeHtml(s.id)}">Изменить</button>
+          <button type="button" class="btn btn-sm btn-danger" data-action="delete" data-id="${escapeHtml(s.id)}">Удалить</button>
         </td>
       `;
       tbody.appendChild(tr);
     }
-    tbody.querySelectorAll('tr').forEach(tr => {
-      const handle = tr.querySelector('.drag-handle');
-      handle.addEventListener('dragstart', (e) => {
+    tbody.querySelectorAll('tr[draggable="true"]').forEach(tr => {
+      tr.addEventListener('dragstart', (e) => {
         state.dragId = tr.getAttribute('data-id');
         tr.classList.add('dragging');
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', state.dragId);
       });
-      handle.addEventListener('dragend', () => { tr.classList.remove('dragging'); state.dragId = null; });
+      tr.addEventListener('dragend', () => { tr.classList.remove('dragging'); state.dragId = null; });
       tr.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
       tr.addEventListener('drop', async (e) => {
         e.preventDefault();
@@ -190,26 +194,13 @@
     state.selectedId = s.id;
     document.getElementById('formTitle').textContent = 'Редактирование сервера';
     document.getElementById('serverId').value = s.id;
-    document.getElementById('techName').value = s.tech_name;
     document.getElementById('displayName').value = s.display_name;
+    document.getElementById('techName').value = s.tech_name;
     document.getElementById('address').value = s.address;
     document.getElementById('sortOrder').value = s.sort_order || 0;
     document.getElementById('isEnabled').checked = !!s.is_enabled;
     state.selectedGroups = (s.group_details || []).map(g => ({ guid: g.guid, cn: g.cn || g.guid }));
     renderSelectedGroups();
-  }
-  function prepareCloneInForm(s) {
-    state.selectedId = null;
-    document.getElementById('formTitle').textContent = 'Новый сервер (по копии)';
-    document.getElementById('serverId').value = '';
-    document.getElementById('techName').value = `${s.tech_name}-copy`;
-    document.getElementById('displayName').value = `${s.display_name} (копия)`;
-    document.getElementById('address').value = s.port === 3389 ? s.address : `${s.address}:${s.port}`;
-    document.getElementById('sortOrder').value = s.sort_order || 0;
-    document.getElementById('isEnabled').checked = !!s.is_enabled;
-    state.selectedGroups = (s.group_details || []).map(g => ({ guid: g.guid, cn: g.cn || g.guid }));
-    renderSelectedGroups();
-    setStatus('Форма предзаполнена по выбранному серверу. Сохраните как новый.', 'ok');
   }
   async function loadServers() {
     setStatus('Загрузка серверов...');
@@ -252,8 +243,7 @@
     await loadServers();
     resetForm();
   }
-  async function onDelete() {
-    const id = document.getElementById('serverId').value.trim();
+  async function onDelete(id) {
     if (!id) return;
     if (!confirm('Удалить сервер?')) return;
     await api('/api/admin/servers/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -261,22 +251,9 @@
     await loadServers();
     resetForm();
   }
-  async function onClone() {
-    const id = document.getElementById('serverId').value.trim();
-    if (!id) return;
-    const item = state.servers.find(x => x.id === id);
-    if (!item) return;
-    prepareCloneInForm(item);
-  }
 
   document.getElementById('serverForm').addEventListener('submit', async (e) => {
     try { await onSubmit(e); } catch (err) { setStatus(err.message, 'error'); }
-  });
-  document.getElementById('deleteBtn').addEventListener('click', async () => {
-    try { await onDelete(); } catch (err) { setStatus(err.message, 'error'); }
-  });
-  document.getElementById('cloneBtn').addEventListener('click', async () => {
-    try { await onClone(); } catch (err) { setStatus(err.message, 'error'); }
   });
   document.getElementById('resetBtn').addEventListener('click', resetForm);
   document.getElementById('newBtn').addEventListener('click', resetForm);
@@ -292,9 +269,8 @@
     if (action === 'edit') {
       const item = state.servers.find(x => x.id === id);
       if (item) fillForm(item);
-    } else if (action === 'clone') {
-      const item = state.servers.find(x => x.id === id);
-      if (item) prepareCloneInForm(item);
+    } else if (action === 'delete') {
+      try { await onDelete(id); } catch (err) { setStatus(err.message, 'error'); }
     }
   });
   document.getElementById('groupSearch').addEventListener('input', () => {

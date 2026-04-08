@@ -3,93 +3,256 @@
 {% block page_title %}Мониторинг{% endblock %}
 {% block extra_head %}
   <style>
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-    .kpi { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-    .kpi h3 { margin: 0 0 8px; font-size: 13px; color: #64748b; text-transform: uppercase; }
-    .kpi .val { font-size: 1.75rem; font-weight: 700; }
-    .chart-wrap { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-    .chart-wrap h3 { margin: 0 0 12px; font-size: 1rem; }
-    canvas { max-width: 100%; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .kpi { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; min-height: 110px; }
+    .kpi h3 { margin: 0 0 8px; font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+    .kpi .val { font-size: 1.7rem; font-weight: 700; line-height: 1.2; white-space: nowrap; }
+    .kpi .sub { font-size: 12px; color: #64748b; margin-top: auto; padding-top: 8px; line-height: 1.5; }
+    .kpi .net-row { display: flex; align-items: baseline; gap: 8px; }
+    .kpi .net-row .dir { font-size: 13px; color: #94a3b8; flex-shrink: 0; width: 14px; text-align: center; }
+    .kpi .net-row .net-val { font-size: 1.35rem; font-weight: 700; line-height: 1.3; }
+    .kpi .net-row + .net-row { margin-top: 2px; }
+    .toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+    .toolbar .sep { width: 1px; height: 24px; background: var(--border); margin: 0 6px; }
+    .pill { padding: 5px 14px; border-radius: 20px; border: 1px solid var(--border); background: #fff; cursor: pointer; font-size: 13px; transition: all .15s; }
+    .pill:hover { background: #f1f5f9; }
+    .pill.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .chart-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+    .chart-card h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+    .chart-card canvas { width: 100% !important; height: 200px !important; }
     .muted { color: #64748b; font-size: 13px; }
+    @media (max-width: 860px) { .charts-grid { grid-template-columns: 1fr; } }
   </style>
 {% endblock %}
 {% block content %}
   <p class="muted" id="status">Загрузка метрик…</p>
   <div class="grid" id="kpiRoot"></div>
-  <div class="chart-wrap">
-    <h3>Загрузка CPU (%)</h3>
-    <p class="muted">Последние точки из серии измерений процесса (psutil). Ось Y — процент CPU.</p>
-    <canvas id="cpuCanvas" width="900" height="180"></canvas>
+  <div class="toolbar">
+    <span class="muted" style="margin-right:4px">Период:</span>
+    <button type="button" class="pill active" data-period="1h">1 час</button>
+    <button type="button" class="pill" data-period="6h">6 часов</button>
+    <button type="button" class="pill" data-period="24h">24 часа</button>
+    <span class="sep"></span>
+    <span class="muted" style="margin-right:4px">Шкала:</span>
+    <button type="button" class="pill active" id="scaleFixed">Фиксированная</button>
+    <button type="button" class="pill" id="scaleDynamic">Динамическая</button>
   </div>
-  <div class="chart-wrap">
-    <h3>Память системы (%)</h3>
-    <canvas id="memCanvas" width="900" height="180"></canvas>
+  <div class="charts-grid">
+    <div class="chart-card"><h3>Загрузка CPU</h3><canvas id="cpuChart"></canvas></div>
+    <div class="chart-card"><h3>Оперативная память</h3><canvas id="memChart"></canvas></div>
+    <div class="chart-card"><h3>Активные сессии</h3><canvas id="sessChart"></canvas></div>
+    <div class="chart-card"><h3>Сеть</h3><canvas id="netChart"></canvas></div>
   </div>
 {% endblock %}
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script>
+  let currentPeriod = '1h';
+  let fixedScale = true;
+  const charts = {};
+
   async function api(url) {
     const r = await fetch(url);
     const b = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(b.detail || r.status);
     return b;
   }
-  function drawLine(canvasId, points, key, label, color) {
-    const c = document.getElementById(canvasId);
-    if (!c) return;
-    const g = c.getContext('2d');
-    const w = c.width, h = c.height;
-    g.clearRect(0, 0, w, h);
-    g.fillStyle = '#f8fafc';
-    g.fillRect(0, 0, w, h);
-    g.strokeStyle = '#cbd5e1';
-    g.strokeRect(0, 0, w, h);
-    if (!points.length) return;
-    const xs = points.slice().reverse();
-    let maxV = 100;
-    xs.forEach(p => { const v = Number(p[key] || 0); if (v > maxV) maxV = v; });
-    maxV = Math.max(maxV, 1);
-    g.strokeStyle = color;
-    g.lineWidth = 2;
-    g.beginPath();
-    xs.forEach((p, i) => {
-      const x = (i / (xs.length - 1 || 1)) * (w - 4) + 2;
-      const v = Math.max(0, Math.min(maxV, Number(p[key] || 0)));
-      const y = h - 2 - (v / maxV) * (h - 4);
-      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
-    });
-    g.stroke();
-    g.fillStyle = '#64748b';
-    g.font = '12px Arial';
-    g.fillText(label + ' (max ' + maxV.toFixed(1) + ')', 8, 16);
+  function esc(s) { return String(s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function fmtBytes(b) {
+    if (b == null) return '—';
+    const gb = b / (1024**3);
+    return gb >= 1 ? gb.toFixed(1)+' ГБ' : (b / (1024**2)).toFixed(0)+' МБ';
   }
-  async function load() {
+  function fmtBps(bps) {
+    if (bps == null) return '—';
+    if (bps >= 1024*1024) return (bps/(1024*1024)).toFixed(1)+' МБ/с';
+    if (bps >= 1024) return (bps/1024).toFixed(1)+' КБ/с';
+    return Math.round(bps)+' Б/с';
+  }
+  function fmtTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+  }
+
+  const COLORS = {
+    cpu:     { line: '#6366f1', bg: 'rgba(99,102,241,.12)' },
+    mem:     { line: '#10b981', bg: 'rgba(16,185,129,.12)' },
+    sess:    { line: '#8b5cf6', bg: 'rgba(139,92,246,.12)' },
+    netIn:   { line: '#6366f1', bg: 'rgba(99,102,241,.10)' },
+    netOut:  { line: '#f59e0b', bg: 'rgba(245,158,11,.10)' },
+  };
+
+  function baseOpts(unit, maxY) {
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,.88)',
+          titleFont: { size: 12 },
+          bodyFont: { size: 12 },
+          padding: 10,
+          cornerRadius: 6,
+          callbacks: {},
+        },
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(148,163,184,.15)' },
+          ticks: { font: { size: 10 }, color: '#94a3b8', maxTicksLimit: 8 },
+        },
+        y: {
+          min: 0,
+          max: maxY,
+          grid: { color: 'rgba(148,163,184,.15)' },
+          ticks: {
+            font: { size: 10 },
+            color: '#94a3b8',
+            callback: v => v + (unit || ''),
+          },
+        },
+      },
+    };
+  }
+
+  function makeDataset(label, data, color) {
+    return {
+      label,
+      data,
+      borderColor: color.line,
+      backgroundColor: color.bg,
+      borderWidth: 1.5,
+      pointRadius: 0,
+      pointHitRadius: 8,
+      tension: 0.3,
+      fill: true,
+    };
+  }
+
+  function createOrUpdate(id, labels, datasets, unit, fixedMax) {
+    const maxY = fixedScale && fixedMax != null ? fixedMax : undefined;
+    const opts = baseOpts(unit, maxY);
+    if (charts[id]) {
+      const ch = charts[id];
+      ch.data.labels = labels;
+      ch.data.datasets = datasets;
+      ch.options.scales.y.max = maxY;
+      ch.options.scales.y.ticks.callback = v => v + (unit || '');
+      ch.update('none');
+    } else {
+      charts[id] = new Chart(document.getElementById(id), {
+        type: 'line',
+        data: { labels, datasets },
+        options: opts,
+      });
+    }
+  }
+
+  async function loadDashboard() {
     try {
       const [res, ov] = await Promise.all([
-        api('/api/admin/stats/resources'),
+        api('/api/admin/stats/resources?period=' + currentPeriod),
         api('/api/admin/stats/overview'),
       ]);
-      document.getElementById('status').textContent = 'Обновлено';
-      const latest = res.latest || {};
-      const kpis = [
-        { title: 'CPU (система)', val: (latest.cpu_percent != null ? latest.cpu_percent + '%' : '—') },
-        { title: 'Память системы', val: (latest.system_mem_percent != null ? latest.system_mem_percent + '%' : '—') },
-        { title: 'RSS процесса', val: (latest.mem_rss != null ? (latest.mem_rss / 1048576).toFixed(1) + ' MB' : '—') },
-        { title: 'Активных сессий', val: String(ov.active_sessions ?? '—') },
-        { title: 'Всего сессий в БД', val: String(ov.total_sessions ?? '—') },
-        { title: 'TCP соединений (процесс)', val: String(latest.connections ?? '—') },
-      ];
-      document.getElementById('kpiRoot').innerHTML = kpis.map(k => `
-        <div class="kpi"><h3>${k.title}</h3><div class="val">${k.val}</div></div>
-      `).join('');
-      const pts = res.points || [];
-      drawLine('cpuCanvas', pts, 'cpu_percent', 'CPU %', '#2563eb');
-      drawLine('memCanvas', pts, 'system_mem_percent', 'Память %', '#059669');
+      document.getElementById('status').textContent = '';
+      const L = res.latest || {};
+
+      const cpuName = esc(L.cpu_name || 'N/A');
+      const cpuCores = L.cpu_count || '—';
+      const cpuFreq = L.cpu_freq_mhz ? L.cpu_freq_mhz + ' МГц' : '';
+
+      document.getElementById('kpiRoot').innerHTML = `
+        <div class="kpi">
+          <h3>Процессор</h3>
+          <div class="val">${L.cpu_percent != null ? L.cpu_percent.toFixed(1) + '%' : '—'}</div>
+          <div class="sub">${cpuName}<br>${cpuCores} ядер${cpuFreq ? ' · ' + cpuFreq : ''}<br>Load: ${L.cpu_load_1 ?? '—'} / ${L.cpu_load_5 ?? '—'} / ${L.cpu_load_15 ?? '—'}</div>
+        </div>
+        <div class="kpi">
+          <h3>Память</h3>
+          <div class="val">${L.mem_percent != null ? L.mem_percent.toFixed(1) + '%' : '—'}</div>
+          <div class="sub">${fmtBytes(L.mem_used)} / ${fmtBytes(L.mem_total)}</div>
+        </div>
+        <div class="kpi">
+          <h3>Swap</h3>
+          <div class="val">${L.swap_percent != null ? L.swap_percent.toFixed(1) + '%' : '—'}</div>
+          <div class="sub">${fmtBytes(L.swap_used)} / ${fmtBytes(L.swap_total)}</div>
+        </div>
+        <div class="kpi">
+          <h3>Активные сессии</h3>
+          <div class="val">${ov.active_sessions ?? '—'}</div>
+          <div class="sub">Всего за сегодня: ${ov.today_connections ?? '—'}</div>
+        </div>
+        <div class="kpi">
+          <h3>Сеть</h3>
+          <div class="net-row"><span class="dir">↓</span><span class="net-val">${fmtBps(L.net_bytes_recv_sec)}</span></div>
+          <div class="net-row"><span class="dir">↑</span><span class="net-val">${fmtBps(L.net_bytes_sent_sec)}</span></div>
+          <div class="sub">Входящий / Исходящий</div>
+        </div>
+      `;
+
+      const pts = (res.points || []).slice().reverse();
+      const labels = pts.map(p => fmtTime(p.ts));
+
+      createOrUpdate('cpuChart', labels,
+        [makeDataset('CPU %', pts.map(p => p.cpu_percent||0), COLORS.cpu)],
+        '%', 100);
+
+      createOrUpdate('memChart', labels,
+        [makeDataset('RAM %', pts.map(p => p.mem_percent||0), COLORS.mem)],
+        '%', 100);
+
+      createOrUpdate('sessChart', labels,
+        [makeDataset('Сессии', pts.map(p => p.active_sessions||0), COLORS.sess)],
+        '', null);
+
+      const maxBps = Math.max(1, ...pts.map(p => Math.max(p.net_bytes_recv_sec||0, p.net_bytes_sent_sec||0)));
+      const div = maxBps >= 1024*1024 ? 1024*1024 : 1024;
+      const unit = div >= 1024*1024 ? ' МБ/с' : ' КБ/с';
+      createOrUpdate('netChart', labels, [
+        makeDataset('↓ Входящий', pts.map(p => +((p.net_bytes_recv_sec||0)/div).toFixed(2)), COLORS.netIn),
+        makeDataset('↑ Исходящий', pts.map(p => +((p.net_bytes_sent_sec||0)/div).toFixed(2)), COLORS.netOut),
+      ], unit, null);
+
+      const netCh = charts['netChart'];
+      if (netCh) {
+        netCh.options.plugins.legend = { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } };
+        netCh.update('none');
+      }
     } catch (e) {
       document.getElementById('status').textContent = e.message;
     }
   }
-  load();
-  setInterval(load, 5000);
+
+  document.querySelectorAll('[data-period]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-period]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentPeriod = btn.getAttribute('data-period');
+      Object.values(charts).forEach(c => c.destroy());
+      Object.keys(charts).forEach(k => delete charts[k]);
+      loadDashboard();
+    });
+  });
+
+  document.getElementById('scaleFixed').addEventListener('click', () => {
+    fixedScale = true;
+    document.getElementById('scaleFixed').classList.add('active');
+    document.getElementById('scaleDynamic').classList.remove('active');
+    loadDashboard();
+  });
+  document.getElementById('scaleDynamic').addEventListener('click', () => {
+    fixedScale = false;
+    document.getElementById('scaleDynamic').classList.add('active');
+    document.getElementById('scaleFixed').classList.remove('active');
+    loadDashboard();
+  });
+
+  loadDashboard();
+  setInterval(loadDashboard, 5000);
 </script>
 {% endblock %}

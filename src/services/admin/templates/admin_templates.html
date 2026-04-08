@@ -7,13 +7,15 @@
     table { width: 100%; border-collapse: collapse; background: var(--card-bg); }
     th, td { border: 1px solid var(--border); padding: 8px; text-align: left; vertical-align: top; }
     .controls { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    .btn { padding: 8px 12px; cursor: pointer; border-radius: 6px; border: 1px solid var(--border); background: #fff; font-size: 13px; }
+    .btn-danger { color: #fff; background: #b00020; border: none; }
+    .btn-sm { padding: 4px 8px; font-size: 12px; }
     .chips { display: flex; flex-wrap: wrap; gap: 6px; }
     .chip { border: 1px solid #888; border-radius: 12px; padding: 2px 8px; font-size: 12px; }
     .search-results { margin-top: 6px; max-height: 160px; overflow: auto; border: 1px solid var(--border); }
     .search-item { padding: 6px; cursor: pointer; border-bottom: 1px solid #eee; }
     .search-item:hover { background: #e9f3ff; }
     form#templateForm { display: grid; gap: 8px; }
-    textarea#params { width: 100%; min-height: 160px; font-family: monospace; font-size: 12px; }
     .ok { color: #008a00; }
     .error { color: #b00020; }
     fieldset.mstsc { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 10px 0; background: var(--card-bg); }
@@ -23,6 +25,7 @@
     .slider-row input[type=range] { flex: 1; min-width: 120px; max-width: 320px; }
     .slider-val { text-align: center; font-weight: 600; margin: 6px 0; min-height: 1.2em; }
     .card-panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    #previewBox { background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; max-height: 240px; overflow: auto; white-space: pre-wrap; }
   </style>
 {% endblock %}
 {% block content %}
@@ -52,20 +55,17 @@
           <div id="mstscEditor"></div>
           <div id="schemaEditor"></div>
         </details>
-        <label>Параметры (JSON, readonly)</label>
-        <textarea id="params" readonly>{}</textarea>
         <label>Поиск AD-групп</label>
         <input id="groupSearch" placeholder="минимум 2 символа">
         <div class="search-results" id="groupResults"></div>
         <div class="chips" id="selectedGroups"></div>
         <div class="controls">
           <button type="submit">Сохранить</button>
-          <button type="button" id="deleteBtn">Удалить</button>
-          <button type="button" id="previewBtn">Preview</button>
           <button type="button" id="resetBtn">Сброс</button>
         </div>
       </form>
-      <pre id="previewBox" style="overflow:auto;max-height:200px"></pre>
+      <h3 style="margin-bottom:6px">Превью RDP-параметров</h3>
+      <div id="previewBox"></div>
     </section>
   </div>
 {% endblock %}
@@ -88,7 +88,7 @@
     { value: 32, label: 'Наивысшее качество (32 бит)' },
   ];
 
-  const state = { templates: [], selectedGroups: [], timer: null, schema: null, currentParams: {} };
+  const state = { templates: [], selectedGroups: [], timer: null, schema: null, currentParams: {}, previewTimer: null };
   function setStatus(t, cls=''){ const e=document.getElementById('status'); e.className=cls; e.textContent=t; }
   function esc(s){ return String(s||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
   async function api(url, opts={}) {
@@ -108,7 +108,7 @@
     const lab = document.getElementById('displaySliderLabel');
     if (el) el.value = String(idx);
     if (lab) lab.textContent = step.label;
-    syncJson();
+    syncParams();
   }
 
   function syncMstscFromParams() {
@@ -181,12 +181,29 @@
     document.getElementById('displaySlider').addEventListener('input', (e) => applySliderStep(Number(e.target.value)));
     document.getElementById('useMultimonChk').addEventListener('change', (e) => {
       state.currentParams['use multimon'] = e.target.checked ? 1 : 0;
-      syncJson();
+      syncParams();
     });
     document.getElementById('sessionBppSelect').addEventListener('change', (e) => {
       state.currentParams['session bpp'] = Number(e.target.value);
-      syncJson();
+      syncParams();
     });
+  }
+
+  function syncParams() {
+    clearTimeout(state.previewTimer);
+    state.previewTimer = setTimeout(() => updatePreview(), 400);
+  }
+
+  function updatePreview() {
+    const lines = [];
+    for (const [k, v] of Object.entries(state.currentParams || {})) {
+      if (typeof v === 'number' || typeof v === 'boolean') {
+        lines.push(`${k}:i:${typeof v === 'boolean' ? (v ? 1 : 0) : v}`);
+      } else {
+        lines.push(`${k}:s:${v}`);
+      }
+    }
+    document.getElementById('previewBox').textContent = lines.join('\n');
   }
 
   function renderTemplates() {
@@ -194,10 +211,13 @@
     tb.innerHTML = state.templates.map(t => `
       <tr>
         <td><code>${esc(t.name)}</code></td>
-        <td>${t.is_default ? 'yes' : ''}</td>
+        <td>${t.is_default ? '✔' : ''}</td>
         <td>${t.priority}</td>
-        <td>${(t.groups||[]).map(g=>`<div class="chip">${esc(g)}</div>`).join('')}</td>
-        <td><button type="button" data-id="${esc(t.id)}" data-action="edit">Изменить</button></td>
+        <td>${(t.group_details||[]).map(g=>`<div class="chip">${esc(g.cn)}</div>`).join('')}</td>
+        <td>
+          <button type="button" class="btn btn-sm" data-id="${esc(t.id)}" data-action="edit">Изменить</button>
+          <button type="button" class="btn btn-sm btn-danger" data-id="${esc(t.id)}" data-action="delete"${t.is_default ? ' disabled title="Нельзя удалить шаблон по умолчанию"' : ''}>Удалить</button>
+        </td>
       </tr>
     `).join('');
   }
@@ -212,12 +232,14 @@
     document.getElementById('priority').value = '0';
     document.getElementById('isDefault').checked = false;
     state.currentParams = {};
-    renderSchemaForm();
-    syncMstscFromParams();
     state.selectedGroups = [];
     renderGroups();
     document.getElementById('previewBox').textContent = '';
     document.getElementById('formTitle').textContent = 'Новый шаблон';
+    if (state.schema) {
+      renderSchemaForm();
+      syncMstscFromParams();
+    }
   }
   function fillForm(t) {
     document.getElementById('templateId').value = t.id;
@@ -227,12 +249,9 @@
     state.currentParams = { ...(t.params || {}) };
     renderSchemaForm();
     syncMstscFromParams();
-    state.selectedGroups = (t.groups || []).map(g => ({ guid:g, cn:g }));
+    state.selectedGroups = (t.group_details || []).map(g => ({ guid: g.guid, cn: g.cn || g.guid }));
     renderGroups();
     document.getElementById('formTitle').textContent = 'Редактирование шаблона';
-  }
-  function syncJson() {
-    document.getElementById('params').value = JSON.stringify(state.currentParams || {}, null, 2);
   }
   function buildControl(key, meta) {
     if (meta.ui_hidden) return null;
@@ -252,7 +271,7 @@
         if (String(value) === String(o.value)) opt.selected = true;
         sel.appendChild(opt);
       }
-      sel.addEventListener('change', () => { state.currentParams[key] = Number(sel.value); syncJson(); });
+      sel.addEventListener('change', () => { state.currentParams[key] = Number(sel.value); syncParams(); });
       wrap.appendChild(sel);
     } else if (meta.type === 'number') {
       const inp = document.createElement('input');
@@ -260,14 +279,21 @@
       if (meta.min != null) inp.min = meta.min;
       if (meta.max != null) inp.max = meta.max;
       inp.value = String(value);
-      inp.addEventListener('change', () => { state.currentParams[key] = Number(inp.value || 0); syncJson(); });
+      inp.addEventListener('change', () => { state.currentParams[key] = Number(inp.value || 0); syncParams(); });
       wrap.appendChild(inp);
     } else {
+      const chkWrap = document.createElement('label');
+      chkWrap.style.display = 'flex';
+      chkWrap.style.alignItems = 'center';
+      chkWrap.style.gap = '6px';
       const chk = document.createElement('input');
       chk.type = 'checkbox';
       chk.checked = Number(value) === 1;
-      chk.addEventListener('change', () => { state.currentParams[key] = chk.checked ? 1 : 0; syncJson(); });
-      wrap.appendChild(chk);
+      chk.addEventListener('change', () => { state.currentParams[key] = chk.checked ? 1 : 0; syncParams(); });
+      chkWrap.appendChild(chk);
+      chkWrap.appendChild(document.createTextNode(meta.label));
+      wrap.innerHTML = '';
+      wrap.appendChild(chkWrap);
     }
     return wrap;
   }
@@ -279,7 +305,7 @@
     for (const [sectionKey, section] of Object.entries(state.schema)) {
       if (sectionKey === 'display') continue;
       const box = document.createElement('fieldset');
-      box.style.margin = '10px 0';
+      box.className = 'mstsc';
       const lg = document.createElement('legend');
       lg.textContent = section.label || sectionKey;
       box.appendChild(lg);
@@ -292,12 +318,12 @@
       }
       root.appendChild(box);
     }
-    syncJson();
+    updatePreview();
   }
   async function loadTemplates() {
     setStatus('Загрузка шаблонов...');
     if (!state.schema) {
-      state.schema = await api('/api/admin/rdp-params-schema');
+      state.schema = await api('/api/admin/templates/schema');
     }
     state.templates = await api('/api/admin/templates');
     renderTemplates();
@@ -315,16 +341,23 @@
   }
   async function saveTemplate(e) {
     e.preventDefault();
+    const name = document.getElementById('name').value.trim();
+    if (!name) { setStatus('Введите имя шаблона', 'error'); return; }
+    const isDefault = !!document.getElementById('isDefault').checked;
+    const editId = document.getElementById('templateId').value.trim();
+    if (isDefault) {
+      const existing = state.templates.find(t => t.is_default && t.id !== editId);
+      if (existing && !confirm(`Шаблон «${existing.name}» уже установлен по умолчанию. Заменить его на текущий?`)) return;
+    }
     const payload = {
-      name: document.getElementById('name').value.trim(),
+      name,
       priority: Number(document.getElementById('priority').value || 0),
-      is_default: !!document.getElementById('isDefault').checked,
+      is_default: isDefault,
       params: state.currentParams,
       groups: state.selectedGroups.map(g => g.guid),
     };
-    const id = document.getElementById('templateId').value.trim();
-    if (id) {
-      await api('/api/admin/templates/' + encodeURIComponent(id), { method:'PUT', body: JSON.stringify(payload) });
+    if (editId) {
+      await api('/api/admin/templates/' + encodeURIComponent(editId), { method:'PUT', body: JSON.stringify(payload) });
       setStatus('Шаблон обновлен', 'ok');
     } else {
       await api('/api/admin/templates', { method:'POST', body: JSON.stringify(payload) });
@@ -333,31 +366,33 @@
     await loadTemplates();
     resetForm();
   }
-  async function deleteTemplate() {
-    const id = document.getElementById('templateId').value.trim();
+  async function deleteTemplate(id) {
     if (!id) return;
-    if (!confirm('Удалить шаблон?')) return;
+    const tpl = state.templates.find(t => t.id === id);
+    if (tpl && tpl.is_default) { setStatus('Нельзя удалить шаблон по умолчанию', 'error'); return; }
+    if (!confirm('Удалить шаблон' + (tpl ? ' «' + tpl.name + '»' : '') + '?')) return;
     await api('/api/admin/templates/' + encodeURIComponent(id), { method:'DELETE' });
+    const editId = document.getElementById('templateId').value.trim();
+    if (editId === id) resetForm();
     await loadTemplates();
-    resetForm();
     setStatus('Шаблон удален', 'ok');
   }
-  async function previewTemplate() {
-    const gs = state.selectedGroups.map(g => 'groups=' + encodeURIComponent(g.guid)).join('&');
-    const data = await api('/api/admin/templates/preview' + (gs ? ('?' + gs) : ''));
-    document.getElementById('previewBox').textContent = JSON.stringify(data.params || {}, null, 2);
-  }
   document.getElementById('templateForm').addEventListener('submit', async (e)=>{ try{ await saveTemplate(e);}catch(err){setStatus(err.message,'error');} });
-  document.getElementById('deleteBtn').addEventListener('click', async ()=>{ try{ await deleteTemplate(); }catch(err){setStatus(err.message,'error');} });
-  document.getElementById('previewBtn').addEventListener('click', async ()=>{ try{ await previewTemplate(); }catch(err){setStatus(err.message,'error');} });
   document.getElementById('resetBtn').addEventListener('click', resetForm);
   document.getElementById('newBtn').addEventListener('click', resetForm);
   document.getElementById('refreshBtn').addEventListener('click', async ()=>{ try{ await loadTemplates(); }catch(err){setStatus(err.message,'error');} });
-  document.getElementById('templatesTbody').addEventListener('click', (e)=> {
-    const b = e.target.closest('button[data-action="edit"]');
-    if (!b) return;
-    const t = state.templates.find(x => x.id === b.getAttribute('data-id'));
-    if (t) fillForm(t);
+  document.getElementById('templatesTbody').addEventListener('click', async (e)=> {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const id = btn.getAttribute('data-id');
+    const action = btn.getAttribute('data-action');
+    if (!id) return;
+    if (action === 'edit') {
+      const t = state.templates.find(x => x.id === id);
+      if (t) fillForm(t);
+    } else if (action === 'delete') {
+      try { await deleteTemplate(id); } catch(err) { setStatus(err.message, 'error'); }
+    }
   });
   document.getElementById('groupSearch').addEventListener('input', ()=> {
     clearTimeout(state.timer);
@@ -382,6 +417,6 @@
     state.selectedGroups = state.selectedGroups.filter(g => g.guid !== guid);
     renderGroups();
   });
-  (async ()=>{ try { await loadTemplates(); resetForm(); } catch(err){ setStatus(err.message,'error'); } })();
+  (async ()=>{ try { await loadTemplates(); } catch(err){ setStatus(err.message,'error'); } })();
 </script>
 {% endblock %}

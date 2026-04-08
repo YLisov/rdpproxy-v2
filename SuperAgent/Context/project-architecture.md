@@ -155,7 +155,7 @@ RDP Relay ─────────────────────► Tar
 - `patch_mcs_server(data, *, client_requested_protocols=None)` — патчит `clientRequestedProtocols` в SC_CORE ответе сервера. Если `client_requested_protocols` передан — ставит его значение, иначе fallback на `PROTOCOL_SSL`.
 
 #### Metrics (`services/metrics`)
-- `collector.py`: psutil snapshot -> Redis latest/series + PostgreSQL heartbeat upsert.
+- `collector.py`: psutil snapshot -> Redis latest/series + PostgreSQL heartbeat upsert. Сетевые метрики читаются из `/host/proc/1/net/dev` (хостовой network namespace через volume `/proc:/host/proc:ro`).
 - `main.py`: цикл сбора с graceful shutdown.
 
 ### 3.4 Инфраструктура (`deploy`)
@@ -220,9 +220,10 @@ services.metrics
 7. Метаданные сессии пишутся в Redis + PostgreSQL history/events.
 
 ### 5.3 Admin monitoring
-1. Metrics сервис публикует heartbeat.
-2. Admin читает cluster/status данные из PostgreSQL/Redis.
-3. Admin может завершать сессии через kill-ключ в Redis.
+1. Metrics сервис публикует heartbeat и метрики (CPU, RAM, SWAP, сеть) в Redis ключи `rdp:metrics:{instance_id}:latest` и `rdp:metrics:{instance_id}:series`.
+2. Admin читает cluster/status данные из PostgreSQL/Redis. `stats.py` поддерживает параметр `period` (1h/6h/24h) для серии точек.
+3. Admin может завершать сессии через kill-ключ в Redis (одиночные и массовые через `/api/admin/sessions/kill-all`).
+4. Дашборд отображает виджеты CPU (с load avg), RAM, SWAP, сеть, активные сессии + графики с переключением периода.
 
 ## 6) Как проект отражает требования v1 + v2
 
@@ -247,6 +248,8 @@ services.metrics
 - Добавить отдельный route модуль в `services/admin/routes/`.
 - Подключить роутер в `services/admin/app.py`.
 - При необходимости: новая модель + миграция Alembic.
+- `portal_name` передаётся во все шаблоны через `_make_handler` (кэш в `app.state.portal_name_cache`).
+- Страница "Администраторы" встроена во вкладку "Настройки" (не отдельная страница).
 
 ### 7.3 Добавление новой бизнес-сущности
 - Новая модель в `libs/db/models/`.
@@ -255,6 +258,7 @@ services.metrics
 
 ## 8) Операционные риски и known pitfalls
 
+- Сервисы `admin` и `metrics` в `docker-compose.yml` монтируют `./src:/app/src:ro` — правки шаблонов и кода видны после пересоздания контейнера; без тома нужен `docker compose build` после каждой правки UI.
 - Неверный LDAP endpoint/credential в `config.yaml` вызывает login fail (частый кейс).
 - Если HAProxy стартует раньше сервисов, может временно дать `503`; лечится health checks/restart.
 - HSTS + неправильный сертификат блокируют доступ к порталу в браузере.

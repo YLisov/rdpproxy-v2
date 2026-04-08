@@ -94,6 +94,8 @@ services:
     command: python -m services.admin.main
     volumes:
       - ./config.yaml:/app/config.yaml:ro
+      # Шаблоны и Python лежат в образе; без этого тома нужен `docker compose build admin` после каждой правки UI
+      - ./src:/app/src:ro
     networks:
       - rdpproxy
     depends_on:
@@ -114,6 +116,8 @@ services:
     command: python -m services.metrics.main
     volumes:
       - ./config.yaml:/app/config.yaml:ro
+      - ./src:/app/src:ro
+      - /proc:/host/proc:ro
     networks:
       - rdpproxy
     depends_on:

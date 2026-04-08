@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
+
+from db.models.settings import AdGroupCache
 from db.models.template import RdpTemplate, TemplateGroupBinding
 from rdp.rdp_file import RDP_PARAM_SCHEMA, default_rdp_params
 from redis_store.sessions import AdminWebSessionData
@@ -24,6 +27,7 @@ class TemplateOut(BaseModel):
     priority: int
     params: dict[str, Any]
     groups: list[str]
+    group_details: list[dict[str, str]] = Field(default_factory=list)
 
 
 class TemplateCreate(BaseModel):
@@ -56,14 +60,29 @@ def _group_uuids(groups: list[str]) -> list[uuid.UUID]:
     return out
 
 
-def _to_out(t: RdpTemplate) -> TemplateOut:
+async def _load_group_name_map(session: AsyncSession, templates: list[RdpTemplate]) -> dict[str, str]:
+    guid_set: set[uuid.UUID] = set()
+    for t in templates:
+        for b in (t.group_bindings or []):
+            guid_set.add(b.ad_group_guid)
+    if not guid_set:
+        return {}
+    rows = await session.execute(sa.select(AdGroupCache.guid, AdGroupCache.cn).where(AdGroupCache.guid.in_(list(guid_set))))
+    return {str(guid): str(cn) for guid, cn in rows.all()}
+
+
+def _to_out(t: RdpTemplate, group_name_map: dict[str, str] | None = None) -> TemplateOut:
+    name_map = group_name_map or {}
+    group_guids = [str(g.ad_group_guid) for g in (t.group_bindings or [])]
+    details = [{"guid": g, "cn": name_map.get(g, g)} for g in group_guids]
     return TemplateOut(
         id=str(t.id),
         name=t.name,
         is_default=bool(t.is_default),
         priority=int(t.priority),
         params=dict(t.params or {}),
-        groups=[str(g.ad_group_guid) for g in (t.group_bindings or [])],
+        groups=group_guids,
+        group_details=details,
     )
 
 
@@ -79,7 +98,9 @@ async def list_templates(request: Request, _: AdminWebSessionData = Depends(requ
         rows = await session.execute(
             sa.select(RdpTemplate).options(selectinload(RdpTemplate.group_bindings)).order_by(RdpTemplate.is_default.desc(), RdpTemplate.priority, RdpTemplate.name)
         )
-        return [_to_out(v) for v in rows.scalars().all()]
+        templates = list(rows.scalars().all())
+        gmap = await _load_group_name_map(session, templates)
+        return [_to_out(v, gmap) for v in templates]
     finally:
         await session.close()
 
@@ -101,9 +122,14 @@ async def create_template(request: Request, body: TemplateCreate, _: AdminWebSes
         )
         t.group_bindings = [TemplateGroupBinding(ad_group_guid=g) for g in _group_uuids(body.groups)]
         session.add(t)
-        await session.commit()
-        await session.refresh(t)
-        return _to_out(t)
+        try:
+            await session.commit()
+        except SAIntegrityError:
+            await session.rollback()
+            raise HTTPException(status_code=409, detail=f"Шаблон с именем '{body.name.strip()}' уже существует")
+        await session.refresh(t, attribute_names=["group_bindings"])
+        gmap = await _load_group_name_map(session, [t])
+        return _to_out(t, gmap)
     finally:
         await session.close()
 
@@ -143,9 +169,14 @@ async def update_template(
         if body.groups is not None:
             t.group_bindings = [TemplateGroupBinding(ad_group_guid=g) for g in _group_uuids(body.groups)]
 
-        await session.commit()
-        await session.refresh(t)
-        return _to_out(t)
+        try:
+            await session.commit()
+        except SAIntegrityError:
+            await session.rollback()
+            raise HTTPException(status_code=409, detail=f"Шаблон с таким именем уже существует")
+        await session.refresh(t, attribute_names=["group_bindings"])
+        gmap = await _load_group_name_map(session, [t])
+        return _to_out(t, gmap)
     finally:
         await session.close()
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -11,6 +12,7 @@ from redis_store.sessions import AdminWebSessionData
 from services.admin.dependencies import get_session_store, require_admin
 
 router = APIRouter(prefix="/api/admin/services", tags=["admin-services"])
+logger = logging.getLogger("rdpproxy.admin.services")
 
 
 @router.get("")
@@ -38,3 +40,12 @@ async def list_services(request: Request, _: AdminWebSessionData = Depends(requi
                 "pid": svc_info.get("pid"),
             })
     return services
+
+
+@router.post("/restart")
+async def restart_service(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> dict[str, str]:
+    """Signal all proxy instances to restart via Redis pub/sub."""
+    store = get_session_store(request)
+    store.client.set("rdp:signal:restart", "1", ex=30)
+    logger.warning("Admin requested service restart")
+    return {"status": "restart_signaled"}

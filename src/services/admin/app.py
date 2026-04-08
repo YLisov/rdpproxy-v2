@@ -17,6 +17,7 @@ from redis_store.client import create_redis_client
 from redis_store.sessions import AdminWebSessionData, SessionStore
 from services.admin.dependencies import ADMIN_COOKIE_NAME, browser_fingerprint, require_admin
 
+from db.models.settings import PortalSetting
 from services.admin.middleware.audit import AuditMiddleware
 from services.admin.routes import (
     ad_groups,
@@ -50,6 +51,31 @@ def create_app(config: AppConfig) -> FastAPI:
     app.state.redis_client = redis_client
     app.state.session_store = SessionStore(redis_client, config.redis, config.security)
     app.state.ldap_auth = LDAPAuthenticator(config.ldap)
+
+    app.state.portal_name_cache = None
+
+    async def _load_portal_name() -> str:
+        cached = app.state.portal_name_cache
+        if cached is not None:
+            return cached
+        try:
+            async with app.state.db_sessionmaker() as dbs:
+                row = await dbs.get(PortalSetting, "portal")
+                if row and isinstance(row.value, dict):
+                    name = row.value.get("name") or "DC319"
+                else:
+                    name = "DC319"
+        except Exception:
+            name = "DC319"
+        app.state.portal_name_cache = name
+        return name
+
+    app.state.load_portal_name = _load_portal_name
+
+    async def _reapply_portal_settings() -> None:
+        app.state.portal_name_cache = None
+
+    app.state.reapply_portal_settings = _reapply_portal_settings
 
     app.add_middleware(AuditMiddleware)
 
@@ -97,14 +123,14 @@ def _register_html_pages(app: FastAPI) -> None:
         ("/admin/settings", "admin_settings.html", "settings"),
         ("/admin/sessions", "admin_sessions.html", "sessions"),
         ("/admin/history", "admin_history.html", "history"),
-        ("/admin/admin-users", "admin_admin_users.html", "admin_users"),
     ]
 
     for path, template_name, nav_key in page_routes:
 
         def _make_handler(tpl: str, nav: str):
             async def handler(request: Request, admin: AdminWebSessionData = Depends(require_admin)):
-                return app.state.templates.TemplateResponse(request, tpl, {"admin": admin, "active_nav": nav})
+                portal_name = await app.state.load_portal_name()
+                return app.state.templates.TemplateResponse(request, tpl, {"admin": admin, "active_nav": nav, "portal_name": portal_name})
             return handler
 
         app.add_api_route(path, _make_handler(template_name, nav_key), methods=["GET"])

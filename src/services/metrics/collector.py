@@ -43,6 +43,11 @@ class MetricsCollector:
         self._interval = max(5, interval_sec)
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
+        self._prev_net: tuple[int, int] | None = None
+        self._prev_ts: float = 0.0
+        freq = psutil.cpu_freq()
+        self._cpu_name = self._detect_cpu_name()
+        self._cpu_freq_mhz = int(freq.current) if freq else 0
 
     def start(self) -> None:
         if self._task and not self._task.done():
@@ -56,20 +61,66 @@ class MetricsCollector:
         if self._task:
             await asyncio.wait([self._task], timeout=3.0)
 
+    @staticmethod
+    def _read_host_net() -> tuple[int, int]:
+        """Read host network bytes via /host/proc/1/net/dev (PID 1 = host network ns)."""
+        HOST_NET_DEV = "/host/proc/1/net/dev"
+        try:
+            total_recv, total_sent = 0, 0
+            with open(HOST_NET_DEV) as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 10 or not parts[0].endswith(":"):
+                        continue
+                    iface = parts[0].rstrip(":")
+                    if iface == "lo":
+                        continue
+                    total_recv += int(parts[1])
+                    total_sent += int(parts[9])
+            return total_recv, total_sent
+        except Exception:
+            net = psutil.net_io_counters()
+            return net.bytes_recv, net.bytes_sent
+
     def _snapshot(self) -> dict[str, Any]:
         vm = psutil.virtual_memory()
+        sw = psutil.swap_memory()
         disk = psutil.disk_usage("/")
+        load1, load5, load15 = psutil.getloadavg()
+
+        host_recv, host_sent = self._read_host_net()
+        now_ts = time.time()
+        net_sent_sec = 0.0
+        net_recv_sec = 0.0
+        if self._prev_net is not None and (now_ts - self._prev_ts) > 0:
+            dt = now_ts - self._prev_ts
+            net_sent_sec = (host_sent - self._prev_net[0]) / dt
+            net_recv_sec = (host_recv - self._prev_net[1]) / dt
+        self._prev_net = (host_sent, host_recv)
+        self._prev_ts = now_ts
+
         return {
-            "ts": int(time.time()),
+            "ts": int(now_ts),
             "instance_id": self._instance_id,
             "cpu_percent": psutil.cpu_percent(interval=None),
             "cpu_count": psutil.cpu_count() or 1,
+            "cpu_name": self._cpu_name,
+            "cpu_freq_mhz": self._cpu_freq_mhz,
+            "cpu_load_1": round(load1, 2),
+            "cpu_load_5": round(load5, 2),
+            "cpu_load_15": round(load15, 2),
             "mem_total": int(vm.total),
             "mem_used": int(vm.used),
             "mem_percent": vm.percent,
+            "swap_total": int(sw.total),
+            "swap_used": int(sw.used),
+            "swap_percent": sw.percent,
             "disk_total": int(disk.total),
             "disk_used": int(disk.used),
             "disk_percent": disk.percent,
+            "net_bytes_sent_sec": round(net_sent_sec),
+            "net_bytes_recv_sec": round(net_recv_sec),
+            "active_sessions": self._count_active_sessions(),
         }
 
     def _publish_redis(self, snap: dict[str, Any]) -> None:
@@ -84,16 +135,7 @@ class MetricsCollector:
     async def _heartbeat_pg(self, snap: dict[str, Any]) -> None:
         now = datetime.now(timezone.utc)
         hostname = socket.gethostname()
-        resources = {
-            "cpu_percent": snap["cpu_percent"],
-            "cpu_count": snap["cpu_count"],
-            "mem_total": snap["mem_total"],
-            "mem_used": snap["mem_used"],
-            "mem_percent": snap["mem_percent"],
-            "disk_total": snap["disk_total"],
-            "disk_used": snap["disk_used"],
-            "disk_percent": snap["disk_percent"],
-        }
+        resources = {k: v for k, v in snap.items() if k not in ("ts", "instance_id")}
         services = self._detect_services()
         async with self._db_factory() as session:
             stmt = pg_insert(ClusterNode).values(
@@ -116,6 +158,26 @@ class MetricsCollector:
             )
             await session.execute(stmt)
             await session.commit()
+
+    def _count_active_sessions(self) -> int:
+        try:
+            return len(self._redis.keys("rdp:active:*"))
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _detect_cpu_name() -> str:
+        name = platform.processor()
+        if name:
+            return name
+        try:
+            with open("/proc/cpuinfo") as f:
+                for line in f:
+                    if line.startswith("model name"):
+                        return line.split(":", 1)[1].strip()
+        except Exception:
+            pass
+        return platform.machine() or "Unknown"
 
     @staticmethod
     def _detect_services() -> dict[str, str]:

@@ -8,32 +8,37 @@
     th input, th select { width: 100%; box-sizing: border-box; font-size: 12px; padding: 4px; }
     .muted { color: #64748b; font-size: 13px; }
     button.kill { padding: 4px 8px; cursor: pointer; border-radius: 4px; border: 1px solid #b00020; background: #fff; color: #b00020; }
+    button.kill-all { padding: 6px 14px; cursor: pointer; border-radius: 6px; border: 1px solid #b00020; background: #b00020; color: #fff; font-size: 13px; }
     .card-panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .top-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+    .top-bar .spacer { flex: 1; }
   </style>
 {% endblock %}
 {% block content %}
-  <p class="muted" id="status">Загрузка…</p>
-  <p class="muted">Фильтры в строке заголовков работают по уже загруженному списку (как в Excel). Кнопка «Сброс фильтров» очищает все поля.</p>
+  <div class="top-bar">
+    <p class="muted" id="status" style="margin:0">Загрузка…</p>
+    <span class="spacer"></span>
+    <button type="button" id="resetFilters" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:#fff;cursor:pointer;font-size:13px">Очистить фильтры</button>
+    <button type="button" class="kill-all" id="killAllBtn">Завершить все сессии</button>
+  </div>
   <div class="card-panel" style="overflow:auto">
     <table id="tbl">
       <thead>
         <tr>
           <th>Логин<br><input type="text" data-col="username" placeholder="фильтр"></th>
-          <th>Куда (имя)<br><input type="text" data-col="server_display" placeholder="фильтр"></th>
-          <th>Сервер<br><input type="text" data-col="server_address" placeholder="фильтр"></th>
-          <th>Порт<br><input type="text" data-col="server_port" placeholder="фильтр"></th>
+          <th>Имя сервера<br><input type="text" data-col="server_display" placeholder="фильтр"></th>
+          <th>Сервер<br><input type="text" data-col="server_addr_full" placeholder="фильтр"></th>
           <th>IP клиента<br><input type="text" data-col="client_ip" placeholder="фильтр"></th>
-          <th>Начало<br><input type="text" data-col="started_at" placeholder="фильтр"></th>
+          <th>Начало сессии</th>
           <th>Длительность</th>
-          <th>Качество<br><input type="text" data-col="connection_quality" placeholder="фильтр"></th>
-          <th>Узел</th>
+          <th>Качество<br><select data-col="connection_quality"><option value="">все</option><option value="good">good</option><option value="medium">medium</option><option value="poor">poor</option></select></th>
+          <th>Узел<br><select data-col="instance_id" id="nodeFilter"><option value="">все</option></select></th>
           <th></th>
         </tr>
       </thead>
       <tbody></tbody>
     </table>
   </div>
-  <p><button type="button" id="resetFilters">Сброс фильтров</button></p>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -46,6 +51,16 @@
     const b = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(b.detail || r.status);
     return b;
+  }
+  function formatDateLocal(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '—';
+    const pad = n => String(n).padStart(2, '0');
+    const off = -d.getTimezoneOffset();
+    const sign = off >= 0 ? '+' : '-';
+    const hh = Math.floor(Math.abs(off) / 60);
+    return `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} (UTC${sign}${hh})`;
   }
   function durationFrom(iso) {
     if (!iso) return '—';
@@ -68,16 +83,24 @@
   }
   function getFilters() {
     const f = {};
-    document.querySelectorAll('#tbl thead input[data-col]').forEach(inp => {
-      f[inp.getAttribute('data-col')] = inp.value.trim();
+    document.querySelectorAll('#tbl thead input[data-col], #tbl thead select[data-col]').forEach(el => {
+      f[el.getAttribute('data-col')] = el.value.trim();
     });
     return f;
+  }
+  function populateNodeFilter() {
+    const sel = document.getElementById('nodeFilter');
+    const current = sel.value;
+    const nodes = [...new Set(rawItems.map(i => i.instance_id).filter(Boolean))];
+    sel.innerHTML = '<option value="">все</option>' + nodes.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    sel.value = current;
   }
   function render() {
     const f = getFilters();
     const tb = document.querySelector('#tbl tbody');
     tb.innerHTML = '';
     for (const i of rawItems) {
+      i.server_addr_full = (i.server_address || '') + ':' + (i.server_port || 3389);
       let ok = true;
       for (const [k, q] of Object.entries(f)) {
         if (!rowMatches(i, k, q)) { ok = false; break; }
@@ -87,10 +110,9 @@
       tr.innerHTML = `
         <td>${esc(i.username)}</td>
         <td>${esc(i.server_display)}</td>
-        <td>${esc(i.server_address)}</td>
-        <td>${esc(i.server_port)}</td>
+        <td>${esc(i.server_addr_full)}</td>
         <td>${esc(i.client_ip)}</td>
-        <td>${esc(i.started_at)}</td>
+        <td>${formatDateLocal(i.started_at)}</td>
         <td>${durationFrom(i.started_at)}</td>
         <td>${esc(i.connection_quality || '—')}</td>
         <td><code>${esc(i.instance_id)}</code></td>
@@ -103,14 +125,17 @@
   async function load() {
     try {
       rawItems = await api('/api/admin/sessions/active');
+      populateNodeFilter();
       render();
     } catch (e) {
       document.getElementById('status').textContent = e.message;
     }
   }
   document.querySelector('#tbl thead').addEventListener('input', () => render());
+  document.querySelector('#tbl thead').addEventListener('change', () => render());
   document.getElementById('resetFilters').addEventListener('click', () => {
     document.querySelectorAll('#tbl thead input[data-col]').forEach(i => { i.value = ''; });
+    document.querySelectorAll('#tbl thead select[data-col]').forEach(s => { s.value = ''; });
     render();
   });
   document.querySelector('#tbl').addEventListener('click', async (e) => {
@@ -120,6 +145,16 @@
     if (!confirm('Завершить сессию?')) return;
     try {
       await api('/api/admin/sessions/' + encodeURIComponent(id) + '/kill', { method: 'POST' });
+      await load();
+    } catch (err) {
+      document.getElementById('status').textContent = err.message;
+    }
+  });
+  document.getElementById('killAllBtn').addEventListener('click', async () => {
+    if (!rawItems.length) return;
+    if (!confirm(`Завершить все ${rawItems.length} активных сессий?`)) return;
+    try {
+      await api('/api/admin/sessions/kill-all', { method: 'POST' });
       await load();
     } catch (err) {
       document.getElementById('status').textContent = err.message;

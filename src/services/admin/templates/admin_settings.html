@@ -9,77 +9,111 @@
     .panel { display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 0 8px 8px 8px; padding: 20px; max-width: 720px; }
     .panel.active { display: block; }
     .panel label { display: grid; gap: 4px; margin-bottom: 14px; font-weight: 600; font-size: 14px; }
+    .panel label.inline-check { display: flex; align-items: center; gap: 8px; }
+    .panel label.inline-check input[type="checkbox"] { width: 18px; height: 18px; margin: 0; }
     .panel input, .panel select, .panel textarea { padding: 8px; border-radius: 6px; border: 1px solid var(--border); font-size: 14px; }
     .panel textarea { min-height: 72px; font-family: inherit; }
     .panel .actions { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
     .panel button.save { padding: 10px 18px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+    .panel button.restart-btn { padding: 10px 18px; background: #b00020; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
     .hint { font-size: 13px; color: #64748b; margin-bottom: 16px; line-height: 1.45; }
     .ok { color: #008a00; }
     .error { color: #b00020; }
     #status { margin-bottom: 12px; }
+    .restart-banner { background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: none; align-items: center; gap: 12px; }
+    .restart-banner.visible { display: flex; }
+    .restart-banner span { flex: 1; color: #991b1b; font-size: 14px; }
+
+    .admin-panel { max-width: 100%; }
+    .admin-panel table { width: 100%; border-collapse: collapse; background: var(--card-bg); margin-bottom: 20px; }
+    .admin-panel th, .admin-panel td { border: 1px solid var(--border); padding: 8px; text-align: left; }
+    .admin-panel .card-inner { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; max-width: 520px; }
+    .admin-panel input, .admin-panel button { padding: 8px; border-radius: 6px; border: 1px solid var(--border); }
+    .admin-panel button { background: #2563eb; color: #fff; border: none; cursor: pointer; }
   </style>
 {% endblock %}
 {% block content %}
   <div id="status" class="hint"></div>
+  <div class="restart-banner" id="restartBanner">
+    <span>Некоторые настройки требуют перезапуска службы для применения.</span>
+    <button type="button" class="restart-btn" id="restartBtn">Перезапустить службу</button>
+  </div>
   <div class="tabs">
-    <button type="button" class="active" data-tab="portal">Портал</button>
-    <button type="button" data-tab="admin">Админка (IP)</button>
+    <button type="button" class="active" data-tab="general">Общие</button>
     <button type="button" data-tab="ldap">LDAP</button>
     <button type="button" data-tab="security">Безопасность</button>
-    <button type="button" data-tab="proxy">Прокси</button>
+    <button type="button" data-tab="admins">Администраторы</button>
   </div>
 
-  <div id="panel-portal" class="panel active">
+  <div id="panel-general" class="panel active">
     <p class="hint">Наименование портала используется в теге <code>&lt;title&gt;</code> пользовательского портала и страницы входа.</p>
     <label>Наименование портала
       <input id="portal_name" type="text" maxlength="128" placeholder="DC319">
     </label>
-    <div class="actions"><button type="button" class="save" data-save="portal">Сохранить</button></div>
-  </div>
-
-  <div id="panel-admin" class="panel">
-    <p class="hint">Глобальный список IP/CIDR, с которых разрешён вход в админ-панель. Пусто = без ограничения. Сохраняется в БД и применяется сразу.</p>
-    <label>Разрешённые IP (через запятую или с новой строки)
-      <textarea id="admin_allowed_ips" placeholder="10.0.0.0/8&#10;192.168.1.10"></textarea>
-    </label>
-    <div class="actions"><button type="button" class="save" data-save="admin_security">Сохранить</button></div>
+    <p class="hint">Публичный адрес и порт, которые подставляются в RDP-файл при скачивании. Смена порта требует перезапуска сервиса.</p>
+    <label>Публичный адрес (host) <input id="proxy_public_host" type="text" placeholder="rdp.example.com"></label>
+    <label>Порт прослушивания <input id="proxy_listen_port" type="number" min="1" max="65535" placeholder="3389"></label>
+    <div class="actions"><button type="button" class="save" data-save="general">Сохранить</button></div>
   </div>
 
   <div id="panel-ldap" class="panel">
-    <p class="hint">Параметры объединяются с <code>config.yaml</code>. Пустые поля не перезаписывают существующие значения в БД. После сохранения LDAP-клиент пересоздаётся без перезапуска сервиса.</p>
-    <label>Сервер <input id="ldap_server" type="text"></label>
-    <label>Режим
+    <p class="hint">Параметры подключения к Active Directory / LDAP. Пустые поля не перезаписывают существующие значения. После сохранения соединение пересоздаётся без перезапуска.</p>
+    <label>Адрес сервера <input id="ldap_server" type="text" placeholder="dc01.example.com"></label>
+    <label>Режим подключения
       <select id="ldap_mode">
-        <option value="plain">plain</option>
-        <option value="starttls">starttls</option>
-        <option value="ldaps">ldaps</option>
+        <option value="plain">Без шифрования (plain)</option>
+        <option value="starttls">STARTTLS</option>
+        <option value="ldaps">LDAPS (SSL)</option>
       </select>
     </label>
-    <label>Порт <input id="ldap_port" type="number"></label>
-    <label><input type="checkbox" id="ldap_tls_verify"> Проверять сертификат (tls_verify)</label>
-    <label>Bind DN <input id="ldap_bind_dn" type="text" autocomplete="off"></label>
-    <label>Bind password <input id="ldap_bind_password" type="password" placeholder="оставьте пустым, чтобы не менять"></label>
-    <label>Users DN <input id="ldap_users_dn" type="text"></label>
-    <label>Домен <input id="ldap_domain" type="text"></label>
+    <label>Порт <input id="ldap_port" type="number" placeholder="389 / 636"></label>
+    <label class="inline-check"><input type="checkbox" id="ldap_tls_verify"> Проверять TLS-сертификат</label>
+    <label>Пользователь привязки (Bind DN) <input id="ldap_bind_dn" type="text" autocomplete="off" placeholder="CN=svc_rdp,OU=Service,DC=example,DC=com"></label>
+    <label>Пароль привязки <input id="ldap_bind_password" type="password" placeholder="оставьте пустым, чтобы не менять"></label>
+    <label>Корень поиска пользователей (Base DN) <input id="ldap_users_dn" type="text" placeholder="OU=Users,DC=example,DC=com"></label>
+    <label>Домен (NetBIOS) <input id="ldap_domain" type="text" placeholder="EXAMPLE"></label>
     <div class="actions">
-      <button type="button" class="save" data-save="ldap">Сохранить LDAP</button>
-      <button type="button" id="ldapCheckBtn">Проверить LDAP</button>
+      <button type="button" class="save" data-save="ldap">Сохранить</button>
+      <button type="button" id="ldapCheckBtn" style="background:#fff;color:var(--text);border:1px solid var(--border)">Проверить подключение</button>
     </div>
   </div>
 
   <div id="panel-security" class="panel">
-    <p class="hint">Часть параметров из <code>config.yaml</code>. Сохранённые здесь значения подмешиваются при следующем применении настроек (и при старте).</p>
-    <label>Попыток входа в минуту <input id="sec_login_attempts" type="number" min="1"></label>
-    <label>Блокировка (секунды) <input id="sec_login_lock" type="number" min="1"></label>
-    <label><input type="checkbox" id="sec_token_fp"> token_fingerprint_enforce</label>
+    <p class="hint">Параметры защиты от перебора паролей и привязки сессий.</p>
+    <label>Максимум попыток входа в минуту <input id="sec_login_attempts" type="number" min="1" placeholder="10"></label>
+    <label>Блокировка после превышения (секунды) <input id="sec_login_lock" type="number" min="1" placeholder="300"></label>
+    <label class="inline-check"><input type="checkbox" id="sec_token_fp"> Привязка токена к устройству (fingerprint)</label>
+    <p class="hint" style="margin-top:16px">Список IP-адресов и подсетей (CIDR), с которых разрешён вход в админ-панель. Пусто — доступ без ограничений.</p>
+    <label>Разрешённые IP для админ-панели
+      <textarea id="admin_allowed_ips" placeholder="10.0.0.0/8&#10;192.168.1.10"></textarea>
+    </label>
     <div class="actions"><button type="button" class="save" data-save="security">Сохранить</button></div>
   </div>
 
-  <div id="panel-proxy" class="panel">
-    <p class="hint">Публичный хост и порт для RDP-файла. Смена listen_port обычно требует перезапуска сервиса — проверьте <code>systemctl restart rdpproxy</code>.</p>
-    <label>public_host <input id="proxy_public_host" type="text"></label>
-    <label>listen_port <input id="proxy_listen_port" type="number" min="1" max="65535"></label>
-    <div class="actions"><button type="button" class="save" data-save="proxy">Сохранить</button></div>
+  <div id="panel-admins" class="panel admin-panel">
+    <p class="hint">Учётные записи не связаны с Active Directory. Ограничение IP: список через запятую (IP или CIDR), пусто = без ограничения.</p>
+    <div id="adminStatus" class="muted" style="margin-bottom:12px"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Логин</th>
+          <th>Активен</th>
+          <th>Смена пароля</th>
+          <th>Разрешённые IP</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="adminTbody"></tbody>
+    </table>
+    <div class="card-inner">
+      <h3 style="margin-top:0">Новый администратор</h3>
+      <form id="createAdminForm" style="display:grid;gap:10px">
+        <label>Логин <input name="username" required></label>
+        <label>Пароль (мин. 8 символов) <input name="password" type="password" required minlength="8"></label>
+        <label>Разрешённые IP (через запятую, необязательно) <input name="allowed_ips" placeholder="10.0.0.0/8, 192.168.1.1"></label>
+        <button type="submit">Создать</button>
+      </form>
+    </div>
   </div>
 {% endblock %}
 {% block scripts %}
@@ -90,8 +124,12 @@
     e.textContent = t || '';
     e.className = cls || 'hint';
   }
+  function esc(s) {
+    return String(s || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  }
   async function api(url, opts = {}) {
     const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+    if (r.status === 204) return null;
     const b = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(b.detail || ('HTTP ' + r.status));
     return b;
@@ -99,6 +137,7 @@
   function tab(name) {
     document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.getAttribute('data-tab') === name));
     document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+    if (name === 'admins') loadAdminUsers();
   }
   document.querySelectorAll('.tabs button').forEach(b => {
     b.addEventListener('click', () => tab(b.getAttribute('data-tab')));
@@ -135,7 +174,7 @@
     return raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
   }
 
-  async function load() {
+  async function loadSettings() {
     setStatus('Загрузка…');
     try {
       settings = await api('/api/admin/settings');
@@ -146,49 +185,58 @@
     }
   }
 
+  function showRestartBanner() {
+    document.getElementById('restartBanner').classList.add('visible');
+  }
+
   document.querySelectorAll('.save').forEach(btn => {
     btn.addEventListener('click', async () => {
       const key = btn.getAttribute('data-save');
-      let payload = {};
-      if (key === 'admin_security') {
-        payload = { allowed_ips: parseIpList(document.getElementById('admin_allowed_ips').value) };
-      }
-      if (key === 'portal') {
-        payload = { name: document.getElementById('portal_name').value.trim() || 'DC319' };
+      let payloads = {};
+      if (key === 'general') {
+        payloads = {
+          portal: { name: document.getElementById('portal_name').value.trim() || 'DC319' },
+          proxy: {
+            public_host: document.getElementById('proxy_public_host').value.trim() || undefined,
+            listen_port: document.getElementById('proxy_listen_port').value
+              ? Number(document.getElementById('proxy_listen_port').value) : undefined,
+          },
+        };
       }
       if (key === 'ldap') {
-        payload = {
-          server: document.getElementById('ldap_server').value.trim() || undefined,
-          mode: document.getElementById('ldap_mode').value || undefined,
-          port: document.getElementById('ldap_port').value ? Number(document.getElementById('ldap_port').value) : undefined,
-          tls_verify: document.getElementById('ldap_tls_verify').checked,
-          bind_dn: document.getElementById('ldap_bind_dn').value.trim() || undefined,
-          users_dn: document.getElementById('ldap_users_dn').value.trim() || undefined,
-          domain: document.getElementById('ldap_domain').value.trim() || undefined,
+        payloads = {
+          ldap: {
+            server: document.getElementById('ldap_server').value.trim() || undefined,
+            mode: document.getElementById('ldap_mode').value || undefined,
+            port: document.getElementById('ldap_port').value ? Number(document.getElementById('ldap_port').value) : undefined,
+            tls_verify: document.getElementById('ldap_tls_verify').checked,
+            bind_dn: document.getElementById('ldap_bind_dn').value.trim() || undefined,
+            users_dn: document.getElementById('ldap_users_dn').value.trim() || undefined,
+            domain: document.getElementById('ldap_domain').value.trim() || undefined,
+          },
         };
         const bp = document.getElementById('ldap_bind_password').value;
-        if (bp) payload.bind_password = bp;
+        if (bp) payloads.ldap.bind_password = bp;
       }
       if (key === 'security') {
-        payload = {
-          login_attempts_per_minute: document.getElementById('sec_login_attempts').value
-            ? Number(document.getElementById('sec_login_attempts').value) : undefined,
-          login_lock_seconds: document.getElementById('sec_login_lock').value
-            ? Number(document.getElementById('sec_login_lock').value) : undefined,
-          token_fingerprint_enforce: document.getElementById('sec_token_fp').checked,
-        };
-      }
-      if (key === 'proxy') {
-        payload = {
-          public_host: document.getElementById('proxy_public_host').value.trim() || undefined,
-          listen_port: document.getElementById('proxy_listen_port').value
-            ? Number(document.getElementById('proxy_listen_port').value) : undefined,
+        payloads = {
+          security: {
+            login_attempts_per_minute: document.getElementById('sec_login_attempts').value
+              ? Number(document.getElementById('sec_login_attempts').value) : undefined,
+            login_lock_seconds: document.getElementById('sec_login_lock').value
+              ? Number(document.getElementById('sec_login_lock').value) : undefined,
+            token_fingerprint_enforce: document.getElementById('sec_token_fp').checked,
+          },
+          admin_security: { allowed_ips: parseIpList(document.getElementById('admin_allowed_ips').value) },
         };
       }
       try {
-        await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ values: { [key]: payload } }) });
+        await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ values: payloads }) });
         setStatus('Сохранено', 'ok');
-        await load();
+        if (key === 'general' && document.getElementById('proxy_listen_port').value) {
+          showRestartBanner();
+        }
+        await loadSettings();
       } catch (e) {
         setStatus(e.message, 'error');
       }
@@ -204,6 +252,104 @@
     }
   });
 
-  load();
+  document.getElementById('restartBtn').addEventListener('click', async () => {
+    if (!confirm('Перезапустить службу? Все активные подключения будут разорваны.')) return;
+    try {
+      await api('/api/admin/services/restart', { method: 'POST' });
+      setStatus('Команда перезапуска отправлена', 'ok');
+    } catch (e) {
+      setStatus(e.message, 'error');
+    }
+  });
+
+  /* ---- Administrator users tab ---- */
+  function setAdminStatus(t, cls) {
+    const e = document.getElementById('adminStatus');
+    e.textContent = t;
+    e.className = cls || 'muted';
+  }
+  function parseIps(s) {
+    return s.split(',').map(x => x.trim()).filter(Boolean);
+  }
+  async function loadAdminUsers() {
+    try {
+      const list = await api('/api/admin/admin-users');
+      document.getElementById('adminTbody').innerHTML = list.map(u => `
+        <tr data-id="${esc(u.id)}">
+          <td><strong>${esc(u.username)}</strong></td>
+          <td>${u.is_active ? 'да' : 'нет'}</td>
+          <td>${u.must_change_password ? 'да' : 'нет'}</td>
+          <td><input type="text" class="ips" value="${esc((u.allowed_ips || []).join(', '))}" style="width:100%;min-width:160px"></td>
+          <td style="white-space:nowrap">
+            <button type="button" class="btn-save" data-id="${esc(u.id)}">Сохранить IP</button>
+            <button type="button" class="btn-toggle" data-id="${esc(u.id)}">${u.is_active ? 'Отключить' : 'Включить'}</button>
+            <button type="button" class="btn-reset" data-id="${esc(u.id)}">Сброс пароля</button>
+            <button type="button" class="btn-del" data-id="${esc(u.id)}">Удалить</button>
+          </td>
+        </tr>
+      `).join('');
+    } catch (err) {
+      setAdminStatus(err.message, 'error');
+    }
+  }
+  document.getElementById('adminTbody').addEventListener('click', async (e) => {
+    const tr = e.target.closest('tr[data-id]');
+    if (!tr) return;
+    const id = tr.getAttribute('data-id');
+    const ipsInput = tr.querySelector('.ips');
+    try {
+      if (e.target.classList.contains('btn-save')) {
+        await api('/api/admin/admin-users/' + encodeURIComponent(id), {
+          method: 'PUT', body: JSON.stringify({ allowed_ips: parseIps(ipsInput.value) }),
+        });
+        setAdminStatus('Сохранено', 'ok');
+        await loadAdminUsers();
+      }
+      if (e.target.classList.contains('btn-toggle')) {
+        const active = e.target.textContent === 'Отключить';
+        await api('/api/admin/admin-users/' + encodeURIComponent(id), {
+          method: 'PUT', body: JSON.stringify({ is_active: !active }),
+        });
+        await loadAdminUsers();
+      }
+      if (e.target.classList.contains('btn-reset')) {
+        const pw = prompt('Новый пароль (мин. 8 символов):');
+        if (!pw || pw.length < 8) return;
+        await api('/api/admin/admin-users/' + encodeURIComponent(id) + '/reset-password', {
+          method: 'POST', body: JSON.stringify({ new_password: pw }),
+        });
+        setAdminStatus('Пароль сброшен; пользователь должен сменить при входе', 'ok');
+      }
+      if (e.target.classList.contains('btn-del')) {
+        if (!confirm('Удалить администратора?')) return;
+        await api('/api/admin/admin-users/' + encodeURIComponent(id), { method: 'DELETE' });
+        await loadAdminUsers();
+        setAdminStatus('Удалено', 'ok');
+      }
+    } catch (err) {
+      setAdminStatus(err.message, 'error');
+    }
+  });
+  document.getElementById('createAdminForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    try {
+      await api('/api/admin/admin-users', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: fd.get('username'),
+          password: fd.get('password'),
+          allowed_ips: parseIps(String(fd.get('allowed_ips') || '')),
+        }),
+      });
+      e.target.reset();
+      setAdminStatus('Создано', 'ok');
+      await loadAdminUsers();
+    } catch (err) {
+      setAdminStatus(err.message, 'error');
+    }
+  });
+
+  loadSettings();
 </script>
 {% endblock %}

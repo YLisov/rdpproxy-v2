@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Админ-панель{% endblock %} — RDP Proxy</title>
+  <title>{{ portal_name }} — {% block title %}Админ-панель{% endblock %}</title>
   <style>
     :root {
       --sidebar-bg: #1e293b;
@@ -24,8 +24,11 @@
       color: var(--sidebar-fg);
       padding: 20px 0;
       min-height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
     .sidebar h2 { margin: 0 16px 20px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--sidebar-muted); }
+    .sidebar nav { flex: 1; }
     .sidebar a {
       display: block;
       padding: 10px 20px;
@@ -36,35 +39,36 @@
     }
     .sidebar a:hover { background: rgba(255,255,255,.06); }
     .sidebar a.active { background: rgba(59,130,246,.15); border-left-color: var(--sidebar-active); color: #fff; }
-    .sidebar .logout { margin-top: 24px; border-top: 1px solid rgba(255,255,255,.1); padding-top: 16px; }
-    .sidebar .logout a { color: var(--sidebar-muted); }
+    .sidebar .logout { border-top: 1px solid rgba(255,255,255,.1); padding: 16px 20px 0; }
+    .sidebar .logout .sidebar-user { font-size: 13px; color: var(--sidebar-fg); font-weight: 600; margin-bottom: 8px; }
+    .sidebar .logout a { color: var(--sidebar-muted); padding: 0; font-size: 13px; }
+    .sidebar .logout a:hover { color: var(--sidebar-fg); }
     .main { flex: 1; padding: 24px 28px; overflow: auto; }
     .main-header { margin-bottom: 20px; }
     .main-header h1 { margin: 0 0 6px; font-size: 1.5rem; }
-    .user-line { font-size: 13px; color: #64748b; }
+    .muted { color: #64748b; font-size: 13px; }
   </style>
   {% block extra_head %}{% endblock %}
 </head>
 <body>
   <aside class="sidebar">
-    <h2>Меню</h2>
+    <h2>{{ portal_name }}</h2>
     <nav>
       <a href="/admin/dashboard" class="{{ 'active' if active_nav == 'dashboard' else '' }}">Дашборд</a>
       <a href="/admin/servers" class="{{ 'active' if active_nav == 'servers' else '' }}">Серверы</a>
       <a href="/admin/templates" class="{{ 'active' if active_nav == 'templates' else '' }}">Шаблоны RDP</a>
       <a href="/admin/sessions" class="{{ 'active' if active_nav == 'sessions' else '' }}">Активные сессии</a>
-      <a href="/admin/history" class="{{ 'active' if active_nav == 'history' else '' }}">История</a>
+      <a href="/admin/history" class="{{ 'active' if active_nav == 'history' else '' }}">История подключений</a>
       <a href="/admin/settings" class="{{ 'active' if active_nav == 'settings' else '' }}">Настройки</a>
-      <a href="/admin/admin-users" class="{{ 'active' if active_nav == 'admin_users' else '' }}">Администраторы</a>
     </nav>
     <div class="logout">
-      <a href="/admin/logout">Выйти из админки</a>
+      <div class="sidebar-user">{{ admin.username }}</div>
+      <a href="/admin/logout">Выйти</a>
     </div>
   </aside>
   <div class="main">
     <header class="main-header">
       <h1>{% block page_title %}Админ-панель{% endblock %}</h1>
-      <p class="user-line">Администратор: <strong>{{ admin.username }}</strong></p>
     </header>
     {% block content %}{% endblock %}
   </div>

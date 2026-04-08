@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 import sqlalchemy as sa
@@ -15,6 +16,13 @@ from redis_store.sessions import AdminWebSessionData
 from services.admin.dependencies import get_config, get_db_sessionmaker, get_session_store, require_admin
 
 router = APIRouter(prefix="/api/admin/sessions", tags=["admin-sessions"])
+
+
+def _parse_dt(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid datetime: {value}") from None
 
 
 class QualityDetail(BaseModel):
@@ -92,10 +100,16 @@ async def sessions_history(
     request: Request,
     username: list[str] = Query(default=[]),
     server_id: list[str] = Query(default=[]),
+    server_display: str | None = Query(default=None),
+    server_address: str | None = Query(default=None),
     status: list[str] = Query(default=[]),
     client_ip: list[str] = Query(default=[]),
+    disconnect_reason: str | None = Query(default=None),
     from_ts: str | None = Query(default=None, alias="from"),
     to_ts: str | None = Query(default=None, alias="to"),
+    ended_from: str | None = Query(default=None),
+    ended_to: str | None = Query(default=None),
+    exclude_active: bool = Query(default=True),
     page: int = 1,
     per_page: int = 50,
     _: AdminWebSessionData = Depends(require_admin),
@@ -103,6 +117,8 @@ async def sessions_history(
     session = await _db(request)
     try:
         stmt = sa.select(ConnectionHistory).order_by(ConnectionHistory.started_at.desc())
+        if exclude_active:
+            stmt = stmt.where(ConnectionHistory.status != "active")
         if username:
             stmt = stmt.where(ConnectionHistory.username.in_(username))
         if server_id:
@@ -114,14 +130,24 @@ async def sessions_history(
                     continue
             if uuids:
                 stmt = stmt.where(ConnectionHistory.server_id.in_(uuids))
+        if server_display:
+            stmt = stmt.where(ConnectionHistory.server_display.ilike(f"%{server_display}%"))
+        if server_address:
+            stmt = stmt.where(ConnectionHistory.server_address.ilike(f"%{server_address}%"))
         if status:
             stmt = stmt.where(ConnectionHistory.status.in_(status))
         if client_ip:
             stmt = stmt.where(ConnectionHistory.client_ip.in_(client_ip))
+        if disconnect_reason:
+            stmt = stmt.where(ConnectionHistory.disconnect_reason.ilike(f"%{disconnect_reason}%"))
         if from_ts:
-            stmt = stmt.where(ConnectionHistory.started_at >= from_ts)
+            stmt = stmt.where(ConnectionHistory.started_at >= _parse_dt(from_ts))
         if to_ts:
-            stmt = stmt.where(ConnectionHistory.started_at <= to_ts)
+            stmt = stmt.where(ConnectionHistory.started_at <= _parse_dt(to_ts))
+        if ended_from:
+            stmt = stmt.where(ConnectionHistory.ended_at >= _parse_dt(ended_from))
+        if ended_to:
+            stmt = stmt.where(ConnectionHistory.ended_at <= _parse_dt(ended_to))
 
         total = await session.scalar(sa.select(sa.func.count()).select_from(stmt.subquery()))
         items = (
@@ -151,6 +177,20 @@ async def sessions_history(
             "per_page": per_page,
             "total": int(total or 0),
         }
+    finally:
+        await session.close()
+
+
+@router.get("/history/reasons")
+async def disconnect_reasons(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> list[str]:
+    session = await _db(request)
+    try:
+        rows = await session.execute(
+            sa.select(sa.distinct(ConnectionHistory.disconnect_reason))
+            .where(ConnectionHistory.disconnect_reason.isnot(None), ConnectionHistory.disconnect_reason != "")
+            .order_by(ConnectionHistory.disconnect_reason)
+        )
+        return [str(r) for r in rows.scalars().all()]
     finally:
         await session.close()
 
@@ -250,6 +290,32 @@ async def session_events(request: Request, connection_id: str, _: AdminWebSessio
         ]
     finally:
         await session.close()
+
+
+@router.post("/kill-all")
+async def kill_all_sessions(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> dict[str, Any]:
+    redis = _redis(request)
+    keys = redis.keys("rdp:active:*")
+    killed = 0
+    session = await _db(request)
+    try:
+        for k in keys:
+            parts = str(k).split(":")
+            if len(parts) < 4:
+                continue
+            connection_id = parts[3]
+            redis.setex(f"rdp:kill:{connection_id}", 60, "1")
+            redis.delete(k)
+            await session.execute(
+                sa.update(ConnectionHistory)
+                .where(ConnectionHistory.id == uuid.UUID(connection_id), ConnectionHistory.status == "active")
+                .values(status="killed", disconnect_reason="admin_kill_all")
+            )
+            killed += 1
+        await session.commit()
+    finally:
+        await session.close()
+    return {"status": "ok", "killed": killed}
 
 
 @router.post("/{connection_id}/kill")

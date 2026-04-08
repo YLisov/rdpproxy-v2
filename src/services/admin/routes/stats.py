@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime, time, timezone
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.history import ConnectionHistory
 from redis_store.sessions import AdminWebSessionData
-from services.admin.dependencies import get_db_sessionmaker, get_session_store, require_admin
+from services.admin.dependencies import get_config, get_db_sessionmaker, get_session_store, require_admin
 
 router = APIRouter(prefix="/api/admin/stats", tags=["admin-stats"])
+
+_PERIOD_POINTS = {"1h": 360, "6h": 2160, "24h": 8640}
 
 
 async def _db(request: Request) -> AsyncSession:
@@ -22,30 +25,42 @@ def _redis(request: Request):
     return get_session_store(request).client
 
 
+def _instance_id(request: Request) -> str:
+    return get_config(request).instance.id
+
+
 @router.get("/overview")
 async def overview(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> dict[str, Any]:
-    session = await _db(request)
-    try:
-        active = await session.scalar(
-            sa.select(sa.func.count(ConnectionHistory.id)).where(ConnectionHistory.status == "active")
+    redis = _redis(request)
+    keys = redis.keys("rdp:active:*")
+    today_start = datetime.combine(date.today(), time.min, tzinfo=timezone.utc)
+    async with get_db_sessionmaker(request)() as db:
+        row = await db.execute(
+            sa.select(sa.func.count()).select_from(ConnectionHistory).where(
+                ConnectionHistory.started_at >= today_start
+            )
         )
-        total = await session.scalar(sa.select(sa.func.count(ConnectionHistory.id)))
-        return {"active_sessions": int(active or 0), "total_sessions": int(total or 0)}
-    finally:
-        await session.close()
+        today_count = row.scalar() or 0
+    return {"active_sessions": len(keys), "today_connections": today_count}
 
 
 @router.get("/resources")
-async def resources(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> dict[str, Any]:
+async def resources(
+    request: Request,
+    period: str = Query("1h"),
+    _: AdminWebSessionData = Depends(require_admin),
+) -> dict[str, Any]:
     redis = _redis(request)
-    raw = redis.get("rdp:metrics:latest")
+    iid = _instance_id(request)
+    raw = redis.get(f"rdp:metrics:{iid}:latest")
     latest = {}
     if raw:
         try:
             latest = json.loads(raw)
         except Exception:
             latest = {}
-    points_raw = redis.lrange("rdp:metrics:series", 0, 300)
+    n = _PERIOD_POINTS.get(period, 360)
+    points_raw = redis.lrange(f"rdp:metrics:{iid}:series", 0, n)
     points = []
     for p in points_raw:
         try:

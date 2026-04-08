@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Вход в админ-панель</title>
+  <title>{{ portal_name }} — Администратор</title>
   <style>
     :root { --bg:#f6f8fb; --fg:#111827; --card:#fff; --border:#dbe2ea; --primary:#2563eb; --err:#b00020; }
     body { font-family: Arial, sans-serif; max-width: 400px; margin: 48px auto; padding: 0 16px; background: var(--bg); color: var(--fg); }
@@ -17,7 +17,7 @@
   </style>
 </head>
 <body>
-  <h1>Админ-панель</h1>
+  <h1>{{ portal_name }} — Администратор</h1>
   <div class="card">
     <form method="post" action="/admin/login">
       <input type="hidden" name="csrf_token" value="{{ csrf_token or '' }}">

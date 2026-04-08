@@ -37,12 +37,14 @@ def _ensure_csrf_token(request: Request) -> str:
     return request.cookies.get(ADMIN_CSRF_COOKIE_NAME) or _issue_csrf_token()
 
 
-def _render_login_page(request: Request, error: str | None, status_code: int = 200) -> HTMLResponse:
+async def _render_login_page(request: Request, error: str | None, status_code: int = 200) -> HTMLResponse:
     templates = request.app.state.templates
     csrf_token = _ensure_csrf_token(request)
+    loader = getattr(request.app.state, "load_portal_name", None)
+    portal_name = (await loader()) if loader else "RDP Proxy"
     response = templates.TemplateResponse(
         request, "admin_login.html",
-        {"error": error, "csrf_token": csrf_token},
+        {"error": error, "csrf_token": csrf_token, "portal_name": portal_name},
         status_code=status_code,
     )
     response.set_cookie(key=ADMIN_CSRF_COOKIE_NAME, value=csrf_token, httponly=False, secure=False, samesite="lax", max_age=600)
@@ -91,7 +93,7 @@ async def login_page(request: Request) -> HTMLResponse:
         sess = store.get_admin_web_session(sid, browser_fingerprint=browser_fingerprint(request))
         if sess and not sess.must_change_password:
             return RedirectResponse(url="/admin/dashboard", status_code=303)
-    return _render_login_page(request, error=None)
+    return await _render_login_page(request, error=None)
 
 
 @router.post("/login", response_class=HTMLResponse)
@@ -100,9 +102,9 @@ async def login_submit(
 ) -> HTMLResponse:
     csrf_cookie = request.cookies.get(ADMIN_CSRF_COOKIE_NAME, "")
     if not csrf_cookie or csrf_cookie != csrf_token:
-        return _render_login_page(request, error="Сессия формы истекла. Обновите страницу.", status_code=400)
+        return await _render_login_page(request, error="Сессия формы истекла. Обновите страницу.", status_code=400)
     if _is_locked(request, username):
-        return _render_login_page(request, error="Слишком много попыток входа. Попробуйте позже.", status_code=429)
+        return await _render_login_page(request, error="Слишком много попыток входа. Попробуйте позже.", status_code=429)
 
     factory = get_db_sessionmaker(request)
     store = get_session_store(request)
@@ -113,7 +115,7 @@ async def login_submit(
         user = row.scalars().first()
         if user is None or not user.is_active or not verify_password(user.password_hash, password):
             _record_fail(request, username)
-            return _render_login_page(request, error="Неверный логин или пароль.", status_code=401)
+            return await _render_login_page(request, error="Неверный логин или пароль.", status_code=401)
         user.last_login_at = datetime.now(timezone.utc)
         await dbs.commit()
         admin_id = str(user.id)
