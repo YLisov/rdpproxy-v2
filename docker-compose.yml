@@ -143,6 +143,34 @@ services:
           cpus: '1.0'
     restart: unless-stopped
 
+  cert-manager:
+    build:
+      context: .
+      dockerfile: deploy/cert-manager/Dockerfile
+    ports:
+      - "80:80"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./deploy:/app/deploy
+      - ./docker-compose.yml:/app/docker-compose.yml:ro
+      - /etc/letsencrypt:/etc/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      COMPOSE_FILE: /app/docker-compose.yml
+      COMPOSE_PROJECT: rdpproxy
+      CERT_DEST: /app/deploy/haproxy/certs/rdp.pem
+    networks:
+      - rdpproxy
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+    restart: unless-stopped
+
   metrics:
     build: .
     command: python -m services.metrics.main

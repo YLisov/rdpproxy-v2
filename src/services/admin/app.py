@@ -15,6 +15,7 @@ from config.loader import AppConfig
 from config.settings_manager import SettingsManager
 from db.engine import create_engine, create_sessionmaker
 from identity.ldap_auth import LDAPAuthenticator
+from redis_store import keys
 from redis_store.client import create_redis_client
 from redis_store.sessions import AdminWebSessionData, SessionStore
 from services.admin.dependencies import ADMIN_COOKIE_NAME, browser_fingerprint, require_admin
@@ -91,15 +92,32 @@ def create_app(config: AppConfig) -> FastAPI:
     async def _on_portal_change(_data: dict[str, Any]) -> None:
         app.state.portal_name_cache = None
 
+    app.state._prev_public_host: str | None = None
+
+    async def _on_proxy_change(data: dict[str, Any]) -> None:
+        new_host = (data.get("public_host") or "").strip()
+        prev = app.state._prev_public_host
+        app.state._prev_public_host = new_host
+        if not new_host or not prev or new_host == prev:
+            return
+        logger.info("public_host changed: %s -> %s, requesting certificate", prev, new_host)
+        try:
+            redis_client.publish(keys.CERT_RENEW_CHANNEL, new_host)
+        except Exception:
+            logger.exception("Failed to publish cert renew signal")
+
     settings_mgr.on_change("ldap", _on_ldap_change)
     settings_mgr.on_change("redis_ttl", _on_redis_ttl_change)
     settings_mgr.on_change("portal", _on_portal_change)
+    settings_mgr.on_change("proxy", _on_proxy_change)
 
     async def _reapply_portal_settings() -> None:
         await settings_mgr.load()
         await _on_ldap_change({})
         await _on_redis_ttl_change(settings_mgr.redis_ttl)
         app.state.portal_name_cache = None
+        proxy = settings_mgr.proxy_params
+        app.state._prev_public_host = (proxy.get("public_host") or "").strip()
 
     app.state.reapply_portal_settings = _reapply_portal_settings
 
@@ -114,7 +132,9 @@ def create_app(config: AppConfig) -> FastAPI:
         store.web_ttl = ttl.get("web_session_ttl", store.web_ttl)
         store.rdp_token_ttl = ttl.get("rdp_token_ttl", store.rdp_token_ttl)
         store.web_idle_ttl = ttl.get("web_idle_ttl", store.web_idle_ttl)
-        logger.info("Admin service settings loaded from DB")
+        proxy = settings_mgr.proxy_params
+        app.state._prev_public_host = (proxy.get("public_host") or "").strip()
+        logger.info("Admin service settings loaded from DB (public_host=%s)", app.state._prev_public_host)
 
     app.add_middleware(AuditMiddleware)
     app.add_middleware(CsrfMiddleware)

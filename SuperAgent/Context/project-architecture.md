@@ -175,7 +175,13 @@ RDP Relay ─────────────────────► Tar
 - `nftables/rules.nft`: ограничение доступа к `9090`.
 - `scripts/gen-dev-cert.sh`: dev-сертификат.
 - `scripts/pg-backup.sh`: backup PostgreSQL.
-- `scripts/renew-cert.sh`: сборка LE cert bundle + reload haproxy.
+- `scripts/renew-cert.sh`: сборка LE cert bundle + reload haproxy + restart rdp-relay. Домен определяется из БД (`portal_settings.proxy.public_host`), можно передать аргументом.
+- `scripts/change-domain.sh`: выпуск нового LE-сертификата для указанного домена через certbot standalone + сборка pem + reload. Используется сервисом `cert-manager`.
+- `cert-manager/Dockerfile`: образ sidecar-сервиса cert-manager (python + certbot + docker CLI).
+
+### 3.5 Сервис cert-manager (`services/cert_manager`)
+- `main.py`: sidecar-процесс, подписан на Redis pub/sub канал `rdp:cert:renew`. При получении сообщения с доменом запускает `change-domain.sh` через subprocess. Graceful shutdown по SIGTERM/SIGINT. Автоматический реконнект к Redis при потере связи.
+- Контейнер `cert-manager` в `docker-compose.yml`: порт 80 для certbot HTTP-01 challenge, монтирует `/etc/letsencrypt`, `/var/run/docker.sock`, `./deploy`, конфиги.
 
 ## 4) Схема зависимостей между модулями
 
@@ -209,6 +215,11 @@ services.metrics
   ├── libs.config
   ├── libs.db.models.node + engine
   └── libs.redis_store.client
+
+services.cert_manager
+  ├── libs.config
+  ├── libs.common.logging
+  └── libs.redis_store.keys
 ```
 
 ## 5) Потоки данных (детально)

@@ -57,6 +57,9 @@
     </label>
     <p class="hint">Публичный адрес и порт, которые подставляются в RDP-файл при скачивании. <span class="apply-badge hot">Адрес — сразу</span> <span class="apply-badge restart">Порт — перезапуск</span></p>
     <label>Публичный адрес (host) <input id="proxy_public_host" type="text" placeholder="rdp.example.com"></label>
+    <p class="hint cert-warn" id="certWarn" style="display:none;color:#92400e;background:#fef3c7;padding:8px 12px;border-radius:6px;margin-top:-8px">
+      При смене домена будет автоматически выпущен новый SSL-сертификат Let's Encrypt. Убедитесь, что DNS для нового домена уже указывает на этот сервер (порт 80 доступен).
+    </p>
     <label>Порт прослушивания <input id="proxy_listen_port" type="number" min="1" max="65535" placeholder="3389"></label>
     <div class="actions"><button type="button" class="save" data-save="general">Сохранить</button></div>
   </div>
@@ -198,6 +201,7 @@
     const P = settings.proxy || {};
     document.getElementById('proxy_public_host').value = P.public_host || '';
     document.getElementById('proxy_listen_port').value = P.listen_port != null ? P.listen_port : '';
+    _savedPublicHost = P.public_host || '';
 
     const D = settings.dns || {};
     document.getElementById('dns_servers').value = (D.servers || []).join('\n');
@@ -230,10 +234,21 @@
     document.getElementById('restartBanner').classList.add('visible');
   }
 
+  let _savedPublicHost = '';
+  const certWarn = document.getElementById('certWarn');
+  document.getElementById('proxy_public_host').addEventListener('input', () => {
+    const cur = document.getElementById('proxy_public_host').value.trim();
+    certWarn.style.display = (_savedPublicHost && cur && cur !== _savedPublicHost) ? 'block' : 'none';
+  });
+
   document.querySelectorAll('.save').forEach(btn => {
     btn.addEventListener('click', async () => {
       const key = btn.getAttribute('data-save');
       let payloads = {};
+      const hostChanged = key === 'general' &&
+        _savedPublicHost &&
+        document.getElementById('proxy_public_host').value.trim() &&
+        document.getElementById('proxy_public_host').value.trim() !== _savedPublicHost;
       if (key === 'general') {
         payloads = {
           portal: { name: document.getElementById('portal_name').value.trim() || 'DC319' },
@@ -296,10 +311,15 @@
       }
       try {
         await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ values: payloads }) });
-        setStatus('Сохранено', 'ok');
+        if (hostChanged) {
+          setStatus('Сохранено. Запрошен выпуск SSL-сертификата для нового домена — это может занять до минуты.', 'ok');
+        } else {
+          setStatus('Сохранено', 'ok');
+        }
         if (key === 'general' && document.getElementById('proxy_listen_port').value) {
           showRestartBanner();
         }
+        certWarn.style.display = 'none';
         await loadSettings();
       } catch (e) {
         setStatus(e.message, 'error');

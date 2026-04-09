@@ -1229,3 +1229,60 @@ docker compose up -d --build rdp-relay
 **Описание**: Каталог на сервере `/opt/rdpproxy-v2` переименован в `/opt/rdpproxy`.
 
 **Результат**: Проект полностью переименован в `rdpproxy`. Старые ссылки на `-v2` / `_v2` удалены из всех конфигов, скриптов и документации.
+
+---
+## Итерация #18
+**Дата**: 2026-04-09
+**Запрос**: Настроить автоматическое обновление SSL-сертификатов Let's Encrypt.
+
+### Действие 18.1
+**Описание**: Проверка `certbot renew --dry-run` — порт 80 доступен извне (проброс на роутере настроен пользователем), standalone challenge проходит успешно.
+**Результат**: `Congratulations, all simulated renewals succeeded`.
+
+### Действие 18.2
+**Описание**: Исправлен deploy hook `/etc/letsencrypt/renewal-hooks/deploy/rdpproxy-reload.sh`.
+**Было**: `systemctl reload rdpproxy` (некорректно — проект работает через Docker Compose, а не systemd).
+**Стало**: склейка `fullchain.pem + privkey.pem` → `rdp.pem` для HAProxy, затем `docker compose kill -s HUP haproxy` + `docker compose restart rdp-relay`.
+
+### Действие 18.3
+**Описание**: Обновлён `deploy/scripts/renew-cert.sh` — параметризован домен (аргумент, по умолчанию `rdp.lisov.pro`), добавлена проверка наличия LE-файлов, добавлен `docker compose restart rdp-relay` для подхвата нового сертификата.
+
+**Результат**: Цепочка автообновления полностью работоспособна: `certbot.timer` (2 раза/день) → `certbot renew` → deploy hook → пересборка `rdp.pem` → перезагрузка HAProxy (HUP) + перезапуск rdp-relay.
+
+### Действие 18.4
+**Описание**: Убран хардкод домена из обоих скриптов. Deploy hook теперь использует `$RENEWED_LINEAGE` (certbot предоставляет автоматически) с fallback на чтение `proxy.public_host` из таблицы `portal_settings` в PostgreSQL. Ручной скрипт `renew-cert.sh` берёт домен из БД (или из аргумента).
+**Изменённые файлы**:
+- `/etc/letsencrypt/renewal-hooks/deploy/rdpproxy-reload.sh`
+- `deploy/scripts/renew-cert.sh`
+
+---
+## Итерация #19
+**Дата**: 2026-04-09
+**Запрос**: Автоматический перевыпуск SSL-сертификата при смене домена через админ-панель.
+
+### Действие 19.1
+**Описание**: Создан скрипт `deploy/scripts/change-domain.sh` — принимает домен, запускает `certbot certonly --standalone`, собирает `rdp.pem`, перезагружает HAProxy (HUP) и rdp-relay. Пути compose-файла и dest параметризованы через env-переменные.
+
+### Действие 19.2
+**Описание**: Добавлен Redis pub/sub канал `CERT_RENEW_CHANNEL = "rdp:cert:renew"` в `libs/redis_store/keys.py`.
+
+### Действие 19.3
+**Описание**: Создан sidecar-сервис `services/cert_manager/main.py` — подписывается на Redis канал `rdp:cert:renew`, при получении сообщения с новым доменом запускает `change-domain.sh` через subprocess. Graceful shutdown, автоматический реконнект к Redis.
+
+### Действие 19.4
+**Описание**: Создан `deploy/cert-manager/Dockerfile` — образ на базе python:3.12-slim с установленными certbot и Docker CLI (+ compose plugin). Копирует код cert-manager и необходимые libs.
+
+### Действие 19.5
+**Описание**: Добавлен сервис `cert-manager` в `docker-compose.yml`. Порт 80 для certbot HTTP-01 challenge. Монтирования: `/etc/letsencrypt`, `/var/run/docker.sock`, `./deploy`, `config.yaml`, `docker-compose.yml`. Сеть rdpproxy для доступа к Redis.
+
+### Действие 19.6
+**Описание**: Добавлен хук `on_change("proxy")` в `services/admin/app.py`. При изменении `public_host` (сравнение с предыдущим значением) публикует новый домен в Redis канал `rdp:cert:renew`. Предыдущее значение инициализируется при старте из БД.
+
+### Действие 19.7
+**Описание**: Обновлён `admin_settings.html`:
+- При изменении поля «Публичный адрес» появляется предупреждение о выпуске нового сертификата и необходимости настройки DNS.
+- После сохранения с изменённым доменом — сообщение «Запрошен выпуск SSL-сертификата для нового домена».
+
+**Результат**: Полная цепочка автоматизации: смена `public_host` в админ-панели → admin on_change хук → Redis pub/sub → cert-manager → certbot certonly → пересборка rdp.pem → reload HAProxy + restart rdp-relay.
+**Новые файлы**: `deploy/scripts/change-domain.sh`, `deploy/cert-manager/Dockerfile`, `src/services/cert_manager/__init__.py`, `src/services/cert_manager/main.py`.
+**Изменённые файлы**: `docker-compose.yml`, `src/libs/redis_store/keys.py`, `src/services/admin/app.py`, `src/services/admin/templates/admin_settings.html`.
