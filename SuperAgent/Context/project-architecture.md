@@ -1,14 +1,14 @@
-# Архитектура проекта — RDPProxy v2 (подробная)
+# Архитектура проекта — RDPProxy (подробная)
 
 ## 1) Архитектурный обзор
 
-`RDPProxy v2` построен как набор изолированных сервисов в Docker, объединенных bridge-сетью `rdpproxy`.
+`RDPProxy` построен как набор изолированных сервисов в Docker, объединенных bridge-сетью `rdpproxy`.
 Единственная внешняя точка входа — контейнер `haproxy`, который:
 - принимает весь публичный трафик на `8443`;
 - делит RDP и HTTPS на L4-уровне;
 - проксирует админ-панель на `9090` только через LAN интерфейс.
 
-Ключевая цель архитектуры: сохранить функциональность v1 и добавить масштабируемость/наблюдаемость/расширяемость.
+Ключевая цель архитектуры: масштабируемость, наблюдаемость и расширяемость.
 
 ## 2) Логическая диаграмма потоков
 
@@ -32,7 +32,7 @@ RDP Relay ─────────────────────► Tar
 ### 3.1 Корень проекта
 
 ```
-/opt/rdpproxy-v2/
+/opt/rdpproxy/
 ├── assets/
 │   └── images/
 │       └── ReceiverFullScreenBackground.jpg   # локальная копия фона страницы входа ADC
@@ -235,16 +235,15 @@ services.metrics
 3. Admin может завершать сессии через kill-ключ в Redis (одиночные и массовые через `/api/admin/sessions/kill-all`).
 4. Дашборд отображает виджеты CPU (с load avg), RAM, SWAP, сеть, активные сессии + графики с переключением периода.
 
-## 6) Как проект отражает требования v1 + v2
+## 6) Реализованные возможности
 
-- **v1 функционал не потерян**: LDAP login, `.rdp`, CredSSP relay, admin CRUD, session tracking.
-- **v2 дополнения реализованы**:
-  - all-in-docker;
-  - L4 mux на `8443`;
-  - PPv2 для RDP;
-  - LAN-only admin;
-  - metrics + cluster awareness;
-  - plugin-based extensibility.
+- LDAP login, `.rdp`, CredSSP relay, admin CRUD, session tracking;
+- all-in-docker;
+- L4 mux на `8443`;
+- PPv2 для RDP;
+- LAN-only admin;
+- metrics + cluster awareness;
+- plugin-based extensibility.
 
 ## 7) Точки расширения (важно для AI-агента)
 

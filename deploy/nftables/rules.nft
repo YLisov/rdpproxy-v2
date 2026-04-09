@@ -1,8 +1,8 @@
 #!/usr/sbin/nft -f
-# RDPProxy v2 — nftables firewall rules
+# RDPProxy — nftables firewall rules
 #
 # Usage:
-#   sudo nft -f /opt/rdpproxy-v2/deploy/nftables/rules.nft
+#   sudo nft -f /opt/rdpproxy/deploy/nftables/rules.nft
 #
 # This ruleset is ADDITIVE: it creates the rdpproxy chain
 # in inet filter and jumps to it from input.

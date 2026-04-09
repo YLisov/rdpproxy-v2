@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_USER: rdpproxy
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: rdpproxy_v2
+      POSTGRES_DB: rdpproxy
     networks:
       - rdpproxy
     healthcheck:

@@ -7,7 +7,7 @@ instance:
   lan_ip: "10.120.0.13"
 
 database:
-  url: "postgresql+asyncpg://rdpproxy:CHANGE_ME@postgres:5432/rdpproxy_v2"
+  url: "postgresql+asyncpg://rdpproxy:CHANGE_ME@postgres:5432/rdpproxy"
   pool_size: 20
   max_overflow: 10
 

@@ -1,4 +1,4 @@
-# RDPProxy v2 — Microservice Architecture
+# RDPProxy — Microservice Architecture
 
 RDP-to-RDP proxy with web portal, admin panel, and cluster support.
 
@@ -59,7 +59,7 @@ as read-only fallback only.
 
 ```bash
 # 1. Clone and configure
-cd /opt/rdpproxy-v2
+cd /opt/rdpproxy
 cp .env.example .env
 # Edit .env: set DB_PASSWORD, LAN_IP
 
@@ -120,13 +120,13 @@ plugins = PluginRegistry([McsPatchPlugin(), SessionMonitorPlugin(), MyPlugin()])
 ./deploy/scripts/pg-backup.sh
 
 # Cron (daily at 3:00 AM, keep 7 days)
-echo "0 3 * * * /opt/rdpproxy-v2/deploy/scripts/pg-backup.sh" | crontab -
+echo "0 3 * * * /opt/rdpproxy/deploy/scripts/pg-backup.sh" | crontab -
 ```
 
 ## Firewall (nftables)
 
 ```bash
-sudo nft -f /opt/rdpproxy-v2/deploy/nftables/rules.nft
+sudo nft -f /opt/rdpproxy/deploy/nftables/rules.nft
 ```
 
 Opens port 8443 publicly, restricts 9090 to LAN only.
@@ -134,7 +134,7 @@ Opens port 8443 publicly, restricts 9090 to LAN only.
 ## Project Structure
 
 ```
-rdpproxy-v2/
+rdpproxy/
 ├── src/
 │   ├── libs/                  # Shared libraries
 │   │   ├── config/            # Pydantic config loader + SettingsManager

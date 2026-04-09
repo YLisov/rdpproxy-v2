@@ -1202,3 +1202,30 @@ docker compose up -d --build rdp-relay
 - `tcp_utils.py`: default high_water в `tune_writer_buffers` использует константу `SOCK_BUF_SIZE` вместо дублирования `512 * 1024`
 
 **Результат**: ~25 файлов изменено. Устранено дублирование, централизованы Redis-ключи, унифицирован rate-limiting, исправлены опечатки и проглоченные исключения.
+
+---
+## Итерация #17
+**Дата**: 2026-04-09
+**Запрос**: Переименование проекта из `rdpproxy-v2` в `rdpproxy`.
+
+### Действие 17.1
+**Описание**: Переименован репозиторий на GitHub (`YLisov/rdpproxy-v2` → `YLisov/rdpproxy`), обновлён git remote.
+
+### Действие 17.2
+**Описание**: Массовая замена `rdpproxy-v2` → `rdpproxy` и `rdpproxy_v2` → `rdpproxy` в рабочих файлах.
+**Изменённые файлы**:
+- `docker-compose.yml` — `POSTGRES_DB: rdpproxy`
+- `alembic.ini` — URL БД
+- `config.yaml.example` — URL БД
+- `config.yaml` (gitignored) — URL БД
+- `deploy/scripts/renew-cert.sh` — пути `/opt/rdpproxy/...`
+- `deploy/scripts/pg-backup.sh` — пути, имя БД, маска бэкапов
+- `deploy/nftables/rules.nft` — комментарий с путём
+- `README.md` — заголовок, пути, структура каталога
+- `SuperAgent/tech-structure.md` — название проекта
+- `SuperAgent/Context/project-architecture.md` — заголовок, пути, описание
+
+### Действие 17.3
+**Описание**: Каталог на сервере `/opt/rdpproxy-v2` переименован в `/opt/rdpproxy`.
+
+**Результат**: Проект полностью переименован в `rdpproxy`. Старые ссылки на `-v2` / `_v2` удалены из всех конфигов, скриптов и документации.
