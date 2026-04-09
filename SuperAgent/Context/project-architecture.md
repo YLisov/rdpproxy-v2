@@ -44,7 +44,8 @@ RDP Relay ─────────────────────► Tar
 ├── config.yaml                # локальный runtime, gitignored
 ├── .env.example
 ├── .env                       # локальный runtime, gitignored
-├── README.md
+├── LICENSE                    # Apache License 2.0 (исходный код репозитория)
+├── README.md                  # пользовательская документация: назначение продукта, установка, эксплуатация, FAQ
 ├── deploy/
 └── src/
 ```
