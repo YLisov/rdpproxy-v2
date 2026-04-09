@@ -126,7 +126,7 @@ echo ""
 echo "Select language / Выберите язык:"
 echo "  1) English"
 echo "  2) Русский"
-read -rp "> " LANG_CHOICE
+read -rp "> " LANG_CHOICE < /dev/tty
 LANG_CHOICE="${LANG_CHOICE:-1}"
 setup_i18n
 
@@ -157,23 +157,23 @@ info "$(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-Linux}" || echo "L
 step "$MSG_UPDATE_SYS"
 export DEBIAN_FRONTEND=noninteractive
 info "$MSG_UPDATE_LIST"
-apt-get update -y -qq
+apt-get update -y -qq < /dev/null
 info "$MSG_UPGRADE"
-apt-get upgrade -y -qq
+apt-get upgrade -y -qq < /dev/null
 
 # ═════════════════════════════════════════════════════════════════════
 #  4. Install dependencies
 # ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_INSTALL_DEPS"
-apt-get install -y -qq git curl openssl certbot ca-certificates >/dev/null
+apt-get install -y -qq git curl openssl certbot ca-certificates < /dev/null >/dev/null
 info "git, curl, openssl, certbot"
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   info "$MSG_DOCKER_OK ($(docker --version | cut -d' ' -f3 | tr -d ','))"
 else
   info "$MSG_INSTALL_DOCKER"
-  curl -fsSL https://get.docker.com | sh -s -- --quiet
+  curl -fsSL https://get.docker.com | sh -s -- --quiet < /dev/null
   systemctl enable --now docker
   info "Docker $(docker --version | cut -d' ' -f3 | tr -d ',')"
 fi
@@ -191,7 +191,7 @@ elif [ -f "${INSTALL_DIR}/docker-compose.yml" ]; then
   info "$MSG_CLONE_EXISTS ($PROJECT_DIR)"
 else
   step "$MSG_CLONE"
-  git clone "$REPO_URL" "$INSTALL_DIR"
+  git clone "$REPO_URL" "$INSTALL_DIR" < /dev/null
   PROJECT_DIR="$INSTALL_DIR"
   info "$PROJECT_DIR"
 fi
@@ -205,26 +205,26 @@ cd "$PROJECT_DIR"
 step "$MSG_DIALOG_HEADER"
 
 printf "\n  ${BOLD}%s${NC}\n" "$MSG_DOMAIN"
-read -rp "  > " INPUT_DOMAIN
+read -rp "  > " INPUT_DOMAIN < /dev/tty
 DOMAIN="${INPUT_DOMAIN:-}"
 
 LE_EMAIL=""
 if [ -n "$DOMAIN" ]; then
   printf "\n  ${BOLD}%s${NC}\n" "$MSG_EMAIL"
-  read -rp "  > " INPUT_EMAIL
+  read -rp "  > " INPUT_EMAIL < /dev/tty
   LE_EMAIL="${INPUT_EMAIL:-}"
 fi
 
 printf "\n  ${BOLD}%s${NC}\n" "$MSG_NODEID"
-read -rp "  > " INPUT_NODEID
+read -rp "  > " INPUT_NODEID < /dev/tty
 NODE_ID="${INPUT_NODEID:-node-$(openssl rand -hex 4)}"
 
 printf "\n  ${BOLD}%s${NC}\n" "$MSG_DBPASS"
-read -rp "  > " INPUT_DBPASS
+read -rp "  > " INPUT_DBPASS < /dev/tty
 DB_PASSWORD="${INPUT_DBPASS:-$(openssl rand -hex 24)}"
 
 printf "\n  ${BOLD}%s${NC}\n" "$MSG_REDISPASS"
-read -rp "  > " INPUT_REDISPASS
+read -rp "  > " INPUT_REDISPASS < /dev/tty
 REDIS_PASSWORD="${INPUT_REDISPASS:-$(openssl rand -hex 24)}"
 
 ENCRYPTION_KEY="$(openssl rand -hex 32)"
@@ -357,11 +357,11 @@ info "rdpproxy.service"
 # ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_BUILD"
-docker compose build --quiet
+docker compose build --quiet < /dev/null
 info "docker compose build"
 
 step "$MSG_START"
-docker compose up -d
+docker compose up -d < /dev/null
 info "docker compose up -d"
 
 # ═════════════════════════════════════════════════════════════════════
