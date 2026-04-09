@@ -69,6 +69,7 @@ setup_i18n() {
       MSG_REBOOT_HINT="Для применения обновлений ядра может потребоваться перезагрузка."
       MSG_HEALTH_FAIL="Сервис %s не поднялся за отведённое время."
       MSG_SELFSIGNED_WARN="Используется self-signed сертификат — браузер покажет предупреждение."
+      MSG_STOP_PREV="Обнаружены контейнеры от предыдущего запуска — останавливаю..."
       MSG_PORT80_CHECK="Проверка доступности порта 80..."
       MSG_PORT80_BUSY="Порт 80 занят другим процессом. Остановите его и повторите установку, либо нажмите Enter для self-signed."
       MSG_PORT80_BLOCKED="Порт 80 недоступен извне (firewall/security group). Откройте порт и нажмите Enter, либо просто Enter для self-signed."
@@ -119,6 +120,7 @@ setup_i18n() {
       MSG_REBOOT_HINT="A reboot may be required to apply kernel updates."
       MSG_HEALTH_FAIL="Service %s did not become healthy in time."
       MSG_SELFSIGNED_WARN="Using self-signed certificate — browser will show a warning."
+      MSG_STOP_PREV="Found containers from a previous run — stopping..."
       MSG_PORT80_CHECK="Checking port 80 availability..."
       MSG_PORT80_BUSY="Port 80 is in use by another process. Stop it and retry, or press Enter for self-signed."
       MSG_PORT80_BLOCKED="Port 80 is not reachable from the internet (firewall/security group). Open it and press Enter, or just Enter for self-signed."
@@ -257,6 +259,12 @@ info ".env"
 # ═════════════════════════════════════════════════════════════════════
 
 USE_SELFSIGNED=false
+
+# Stop containers from a previous run that might hold port 80
+if docker compose ps -q 2>/dev/null | grep -q .; then
+  warn "$MSG_STOP_PREV"
+  docker compose down --remove-orphans < /dev/null 2>/dev/null || true
+fi
 
 check_port80() {
   if ss -tlnp 2>/dev/null | grep -q ':80 '; then
