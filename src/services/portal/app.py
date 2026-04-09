@@ -104,7 +104,8 @@ async def _settings_listener(app: FastAPI) -> None:
     """Background task: listen for settings changes via Redis pub/sub."""
     try:
         pubsub = app.state.redis_client.pubsub()
-        pubsub.subscribe("rdp:settings:changed")
+        from redis_store.keys import SETTINGS_CHANGED_CHANNEL
+        pubsub.subscribe(SETTINGS_CHANGED_CHANNEL)
         while True:
             msg = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
             if msg and msg["type"] == "message":

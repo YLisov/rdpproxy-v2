@@ -1141,3 +1141,64 @@ docker compose up -d --build rdp-relay
 - `src/libs/rdp/credssp.py` — добавлена функция `_extract_raw_pubkey()` с ASN.1 парсингом вместо `spki_der[24:]`
 
 **Результат**: Реализованы все 24 исправления безопасности из плана. Изменены ~30 файлов.
+
+---
+## Итерация #36
+**Дата**: 2026-04-09
+**Запрос**: Рефакторинг кодовой базы — очистка, устранение дублирования, централизация
+
+### Удалённые файлы
+- `styleguide.md` — дизайн-документация, не используется в коде
+- `tests/` — пустая директория (только `__init__.py`, ни одного теста)
+- `deploy/cron/` — пустая директория
+
+### `.gitignore`
+- Добавлен `.cursor/` для артефактов IDE
+
+### Новые модули
+
+**`src/libs/redis_store/keys.py`** — централизованные Redis-ключи:
+- Все строковые паттерны ключей (TOKEN, WEB_SESSION, ADMIN_WEB_SESSION, ACTIVE_SESSION, KILL_SESSION, METRICS_*, HEARTBEAT, NODE_*, SIGNAL_RESTART, AD_GROUPS_SEARCH, PORTAL/ADMIN_FAIL/LOCK_*)
+- Все TTL-константы (KILL_TTL, AD_SEARCH_CACHE_TTL, METRICS_LATEST_TTL, SIGNAL_RESTART_TTL, FAIL_COUNTER_TTL)
+- Pub/Sub каналы (SETTINGS_CHANGED_CHANNEL)
+
+**`src/libs/security/login_limiter.py`** — унифицированный rate-limiter:
+- Класс `LoginLimiter` с параметризованными паттернами ключей
+- Фабрики `portal_limiter()` и `admin_limiter()` для разных контекстов
+- Методы: `is_locked()`, `record_failure()`, `clear()`
+
+### Устранение дублирования
+
+**`admin/dependencies.py`**:
+- Добавлены `get_db_session()` и `get_redis_client()` — единые точки получения DB-сессии и Redis-клиента
+- Переименовано `_logger` → `logger` для консистентности со всеми остальными файлами
+
+**Admin route файлы** (`admin_users.py`, `templates.py`, `sessions.py`, `stats.py`, `servers.py`):
+- Удалены дублирующиеся `_db()` и `_redis()` из каждого файла
+- Импорт `get_db_session`/`get_redis_client` из `dependencies`
+
+**`portal/dependencies.py`**:
+- Добавлен `get_redis_client()` для единообразия с admin
+
+**Auth файлы** (`admin/routes/auth.py`, `portal/routes/auth.py`):
+- Удалена дублирующаяся логика `_is_locked/_record_fail/_clear_fail` и `_is_login_locked/_record_failed_login/_clear_failed_login`
+- Заменены на использование `LoginLimiter` из `security/login_limiter.py`
+
+### Обновление на Redis-ключи из `keys.py`
+Заменены хардкод-строки на константы из `redis_store.keys` в файлах:
+- `redis_store/sessions.py`, `redis_store/active_tracker.py`
+- `services/admin/routes/sessions.py`, `stats.py`, `cluster.py`, `services_mgmt.py`, `ad_groups.py`
+- `services/metrics/collector.py`
+- `services/rdp_relay/handler.py`, `main.py`
+- `services/rdp_relay/plugins/connection_quality.py`
+- `config/settings_manager.py`, `services/portal/app.py`
+
+### Мелкие правки
+- `rdp/credssp.py`: исправлены опечатки `cripted_key` → `encrypted_key`, `cripted_creds` → `encrypted_creds`
+- `rdp_relay/tcp_utils.py`: все `except Exception: pass` заменены на `logger.debug(...)` с exc_info
+- `admin_users.py`: `AdminUser.is_active == True` (noqa: E712) заменено на `.is_(True)`
+- `admin_users.py`, `templates.py`, `servers.py`: `except Exception` при UUID-парсинге заменены на `except (ValueError, AttributeError)`
+- `common/logging.py`: добавлены type hints к factory-функции
+- `tcp_utils.py`: default high_water в `tune_writer_buffers` использует константу `SOCK_BUF_SIZE` вместо дублирования `512 * 1024`
+
+**Результат**: ~25 файлов изменено. Устранено дублирование, централизованы Redis-ключи, унифицирован rate-limiting, исправлены опечатки и проглоченные исключения.

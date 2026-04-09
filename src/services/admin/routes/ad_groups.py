@@ -12,8 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.settings import AdGroupCache
 from identity.ldap_auth import LDAPAuthenticator
-from redis_store.sessions import AdminWebSessionData, SessionStore
-from services.admin.dependencies import get_db_sessionmaker, get_session_store, require_admin
+from redis_store import keys
+from redis_store.sessions import AdminWebSessionData
+from services.admin.dependencies import get_db_sessionmaker, get_redis_client, require_admin
 
 router = APIRouter(prefix="/api/admin/ad-groups", tags=["admin-ad-groups"])
 
@@ -27,10 +28,6 @@ class AdGroupOut(BaseModel):
 
 class RefreshResult(BaseModel):
     imported: int = Field(ge=0)
-
-
-def _get_redis(request: Request) -> SessionStore:
-    return get_session_store(request)
 
 
 def _get_ldap(request: Request) -> LDAPAuthenticator:
@@ -84,23 +81,21 @@ async def search_groups(
 
     limit = max(1, min(int(limit or 20), 50))
 
-    redis_store = _get_redis(request)
-    cache_key = "rdp:adgroups:search:" + hashlib.sha1(q.lower().encode("utf-8")).hexdigest()
-    cached = redis_store.client.get(cache_key)
+    rc = get_redis_client(request)
+    cache_key = keys.AD_GROUPS_SEARCH.format(hash=hashlib.sha1(q.lower().encode("utf-8")).hexdigest())
+    cached = rc.get(cache_key)
     if cached:
         try:
             items = json.loads(cached)
             return [AdGroupOut(**v) for v in items]
         except Exception:
-            redis_store.client.delete(cache_key)
+            rc.delete(cache_key)
 
     ldap = _get_ldap(request)
     groups = ldap.search_groups(q, limit=limit)
 
-    # Cache short-lived search results.
-    redis_store.client.setex(cache_key, 120, json.dumps(groups, ensure_ascii=False))
+    rc.setex(cache_key, keys.AD_SEARCH_CACHE_TTL, json.dumps(groups, ensure_ascii=False))
 
-    # Upsert into PostgreSQL for display and joins.
     factory = get_db_sessionmaker(request)
     async with factory() as session:
         await _upsert_groups(session, groups)

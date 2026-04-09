@@ -9,6 +9,7 @@ from hashlib import sha256
 import redis as redis_lib
 
 from config.loader import RedisConfig, SecurityConfig
+from redis_store import keys
 from redis_store.encryption import AESEncryptor
 
 
@@ -66,6 +67,7 @@ class SessionStore:
         server_id: str | None = None, server_display: str | None = None,
     ) -> str:
         token = secrets.token_urlsafe(32)
+        key = keys.TOKEN.format(token=token)
         aad = self._password_aad("rdp:token", token, username)
         payload = {
             "username": username,
@@ -76,11 +78,12 @@ class SessionStore:
             "server_id": server_id,
             "server_display": server_display,
         }
-        self.client.setex(f"rdp:token:{token}", self.rdp_token_ttl, json.dumps(payload))
+        self.client.setex(key, self.rdp_token_ttl, json.dumps(payload))
         return token
 
     def get_session(self, token: str) -> SessionData | None:
-        raw = self.client.get(f"rdp:token:{token}")
+        key = keys.TOKEN.format(token=token)
+        raw = self.client.get(key)
         if not raw:
             return None
         payload = json.loads(raw)
@@ -97,7 +100,7 @@ class SessionStore:
         )
 
     def set_token_fingerprint(self, token: str, fingerprint: str) -> bool:
-        key = f"rdp:token:{token}"
+        key = keys.TOKEN.format(token=token)
         with self.client.pipeline() as pipe:
             while True:
                 try:
@@ -118,7 +121,7 @@ class SessionStore:
                     continue
 
     def token_fingerprint_matches(self, token: str, fingerprint: str) -> bool:
-        raw = self.client.get(f"rdp:token:{token}")
+        raw = self.client.get(keys.TOKEN.format(token=token))
         if not raw:
             return False
         payload = json.loads(raw)
@@ -128,7 +131,7 @@ class SessionStore:
         return expected == self._fingerprint_digest(fingerprint)
 
     def delete_session(self, token: str) -> None:
-        self.client.delete(f"rdp:token:{token}")
+        self.client.delete(keys.TOKEN.format(token=token))
 
     # ── Web sessions ──
 
@@ -136,6 +139,7 @@ class SessionStore:
         self, username: str, password: str, groups: list[str], group_guids: list[str], browser_fingerprint: str,
     ) -> str:
         session_id = secrets.token_urlsafe(32)
+        key = keys.WEB_SESSION.format(session_id=session_id)
         aad = self._password_aad("rdp:web", session_id, username)
         now = int(time.time())
         payload = {
@@ -146,11 +150,11 @@ class SessionStore:
             "browser_fingerprint": self._fingerprint_digest(browser_fingerprint),
             "last_seen_ts": now,
         }
-        self.client.setex(f"rdp:web:{session_id}", self.web_ttl, json.dumps(payload))
+        self.client.setex(key, self.web_ttl, json.dumps(payload))
         return session_id
 
     def get_web_session(self, session_id: str, browser_fingerprint: str) -> WebSessionData | None:
-        key = f"rdp:web:{session_id}"
+        key = keys.WEB_SESSION.format(session_id=session_id)
         with self.client.pipeline() as pipe:
             try:
                 pipe.watch(key)
@@ -189,7 +193,7 @@ class SessionStore:
         )
 
     def delete_web_session(self, session_id: str) -> None:
-        self.client.delete(f"rdp:web:{session_id}")
+        self.client.delete(keys.WEB_SESSION.format(session_id=session_id))
 
     # ── Admin web sessions ──
 
@@ -198,6 +202,7 @@ class SessionStore:
         browser_fingerprint: str, allowed_ips: list[str] | None = None,
     ) -> str:
         session_id = secrets.token_urlsafe(32)
+        key = keys.ADMIN_WEB_SESSION.format(session_id=session_id)
         now = int(time.time())
         payload = {
             "admin_user_id": admin_user_id,
@@ -207,11 +212,11 @@ class SessionStore:
             "last_seen_ts": now,
             "allowed_ips": allowed_ips or [],
         }
-        self.client.setex(f"rdp:admin:web:{session_id}", self.web_ttl, json.dumps(payload))
+        self.client.setex(key, self.web_ttl, json.dumps(payload))
         return session_id
 
     def get_admin_web_session(self, session_id: str, browser_fingerprint: str) -> AdminWebSessionData | None:
-        key = f"rdp:admin:web:{session_id}"
+        key = keys.ADMIN_WEB_SESSION.format(session_id=session_id)
         with self.client.pipeline() as pipe:
             try:
                 pipe.watch(key)
@@ -249,7 +254,7 @@ class SessionStore:
         )
 
     def update_admin_must_change(self, session_id: str, must_change_password: bool) -> None:
-        key = f"rdp:admin:web:{session_id}"
+        key = keys.ADMIN_WEB_SESSION.format(session_id=session_id)
         raw = self.client.get(key)
         if not raw:
             return
@@ -260,4 +265,4 @@ class SessionStore:
             self.client.setex(key, ttl, json.dumps(payload))
 
     def delete_admin_web_session(self, session_id: str) -> None:
-        self.client.delete(f"rdp:admin:web:{session_id}")
+        self.client.delete(keys.ADMIN_WEB_SESSION.format(session_id=session_id))

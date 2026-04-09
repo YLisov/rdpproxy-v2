@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import redis as redis_lib
 from fastapi import HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -40,6 +41,11 @@ def get_db_sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:
     if factory is None:
         raise HTTPException(status_code=500, detail="Database not initialized")
     return factory
+
+
+def get_redis_client(request: Request) -> redis_lib.Redis:
+    """Return the raw Redis client from the session store."""
+    return get_session_store(request).client
 
 
 def get_ldap(request: Request) -> LDAPAuthenticator:

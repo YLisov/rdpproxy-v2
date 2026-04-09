@@ -15,7 +15,7 @@ from db.models.settings import AdGroupCache
 from db.models.template import RdpTemplate, TemplateGroupBinding
 from rdp.rdp_file import RDP_PARAM_SCHEMA, default_rdp_params
 from redis_store.sessions import AdminWebSessionData
-from services.admin.dependencies import get_db_sessionmaker, require_admin
+from services.admin.dependencies import get_db_session, require_admin
 
 router = APIRouter(prefix="/api/admin/templates", tags=["admin-templates"])
 
@@ -46,16 +46,12 @@ class TemplateUpdate(BaseModel):
     groups: list[str] | None = None
 
 
-async def _db(request: Request) -> AsyncSession:
-    return get_db_sessionmaker(request)()
-
-
 def _group_uuids(groups: list[str]) -> list[uuid.UUID]:
     out: list[uuid.UUID] = []
     for g in groups:
         try:
             out.append(uuid.UUID(str(g)))
-        except Exception:
+        except (ValueError, AttributeError):
             raise HTTPException(status_code=400, detail=f"Invalid group GUID: {g}") from None
     return out
 
@@ -93,7 +89,7 @@ async def get_schema(_: AdminWebSessionData = Depends(require_admin)) -> dict[st
 
 @router.get("", response_model=list[TemplateOut])
 async def list_templates(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> list[TemplateOut]:
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         rows = await session.execute(
             sa.select(RdpTemplate).options(selectinload(RdpTemplate.group_bindings)).order_by(RdpTemplate.is_default.desc(), RdpTemplate.priority, RdpTemplate.name)
@@ -107,7 +103,7 @@ async def list_templates(request: Request, _: AdminWebSessionData = Depends(requ
 
 @router.post("", response_model=TemplateOut, status_code=status.HTTP_201_CREATED)
 async def create_template(request: Request, body: TemplateCreate, _: AdminWebSessionData = Depends(require_admin)) -> TemplateOut:
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         if body.is_default:
             await session.execute(sa.update(RdpTemplate).values(is_default=False))
@@ -140,10 +136,10 @@ async def update_template(
 ) -> TemplateOut:
     try:
         tid = uuid.UUID(template_id)
-    except Exception:
+    except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid template id") from None
 
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         row = await session.execute(
             sa.select(RdpTemplate).where(RdpTemplate.id == tid).options(selectinload(RdpTemplate.group_bindings))
@@ -185,10 +181,10 @@ async def update_template(
 async def delete_template(request: Request, template_id: str, _: AdminWebSessionData = Depends(require_admin)) -> None:
     try:
         tid = uuid.UUID(template_id)
-    except Exception:
+    except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid template id") from None
 
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         row = await session.execute(sa.select(RdpTemplate).where(RdpTemplate.id == tid))
         t = row.scalars().first()
@@ -209,7 +205,7 @@ async def preview_template(
     _: AdminWebSessionData = Depends(require_admin),
 ) -> dict[str, Any]:
     group_set = {str(v).strip().lower() for v in groups if str(v).strip()}
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         rows = await session.execute(sa.select(RdpTemplate).options(selectinload(RdpTemplate.group_bindings)))
         templates = list(rows.scalars().all())

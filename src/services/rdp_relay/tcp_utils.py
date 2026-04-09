@@ -27,7 +27,7 @@ def configure_tcp_keepalive(writer: asyncio.StreamWriter) -> None:
         if hasattr(socket, "TCP_USER_TIMEOUT"):
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, 45000)
     except Exception:
-        pass
+        logger.debug("Failed to configure TCP keepalive", exc_info=True)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SOCK_BUF_SIZE)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, SOCK_BUF_SIZE)
@@ -39,14 +39,14 @@ def configure_tcp_keepalive(writer: asyncio.StreamWriter) -> None:
 
 def tune_writer_buffers(
     writer: asyncio.StreamWriter,
-    high_water: int = 512 * 1024,
+    high_water: int = SOCK_BUF_SIZE,
     low_water: int = 64 * 1024,
 ) -> None:
     """Raise asyncio transport write-buffer water marks for high throughput."""
     try:
         writer.transport.set_write_buffer_limits(high=high_water, low=low_water)
     except Exception:
-        pass
+        logger.debug("Failed to tune writer buffer limits", exc_info=True)
 
 
 def abort_writer(writer: asyncio.StreamWriter) -> None:
@@ -57,4 +57,4 @@ def abort_writer(writer: asyncio.StreamWriter) -> None:
         try:
             writer.close()
         except Exception:
-            pass
+            logger.debug("Failed to close writer after abort failure", exc_info=True)

@@ -104,7 +104,8 @@ class SettingsManager:
 
         if publish_redis is not None:
             try:
-                publish_redis.publish("rdp:settings:changed", key)
+                from redis_store.keys import SETTINGS_CHANGED_CHANNEL
+                publish_redis.publish(SETTINGS_CHANGED_CHANNEL, key)
             except Exception:
                 logger.warning("Failed to publish settings change to Redis")
 

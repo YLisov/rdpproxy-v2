@@ -30,6 +30,7 @@ from rdp.x224 import (
     extract_cookie_token,
     extract_requested_protocols,
 )
+from redis_store import keys
 from redis_store.active_tracker import ConnectionTracker
 from redis_store.sessions import SessionStore
 from services.rdp_relay.plugins.base import SessionContext
@@ -174,7 +175,7 @@ class RdpConnectionHandler:
             _session_monitor = self._plugins.get_plugin(SessionMonitorPlugin)
 
             def _kill_requested() -> bool:
-                if bool(self._sessions.client.get(f"rdp:kill:{tracked_cid}")):
+                if bool(self._sessions.client.get(keys.KILL_SESSION.format(connection_id=tracked_cid))):
                     return True
                 if _session_monitor and _session_monitor.is_idle():
                     logger.info("Session %s terminated due to idle timeout", tracked_cid)

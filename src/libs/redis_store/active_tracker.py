@@ -12,6 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from db.models.history import ConnectionEvent, ConnectionHistory
+from redis_store import keys
 
 logger = logging.getLogger("rdpproxy.relay.tracker")
 
@@ -62,7 +63,8 @@ class ConnectionTracker:
                 "client_ip": client_ip, "started_at": datetime.now(timezone.utc).isoformat(),
                 "instance_id": self._instance_id,
             }
-            self._redis.set(f"rdp:active:{self._instance_id}:{cid}", json.dumps(payload, ensure_ascii=False), ex=24 * 3600)
+            active_key = keys.ACTIVE_SESSION.format(instance_id=self._instance_id, connection_id=cid)
+            self._redis.set(active_key, json.dumps(payload, ensure_ascii=False), ex=24 * 3600)
         return TrackedConnection(connection_id=cid, username=username, server_address=server_address, server_port=server_port)
 
     async def event(self, connection_id: str, event_type: str, detail: dict[str, Any] | None = None) -> None:
@@ -88,7 +90,7 @@ class ConnectionTracker:
                 )
                 await dbs.commit()
         if self._redis is not None:
-            self._redis.delete(f"rdp:active:{self._instance_id}:{connection_id}")
+            self._redis.delete(keys.ACTIVE_SESSION.format(instance_id=self._instance_id, connection_id=connection_id))
 
     async def reconcile_stale_active_on_startup(self) -> tuple[int, int]:
         """Mark leftover active sessions as error after relay restart."""
@@ -114,7 +116,7 @@ class ConnectionTracker:
                 db_updated = int(result.rowcount or 0)
 
         if self._redis is not None:
-            prefix = f"rdp:active:{self._instance_id}:"
+            prefix = keys.ACTIVE_SESSION.format(instance_id=self._instance_id, connection_id="")
             try:
                 for key in self._redis.scan_iter(match=f"{prefix}*"):
                     self._redis.delete(key)

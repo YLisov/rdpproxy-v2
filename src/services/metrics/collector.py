@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from db.models.node import ClusterNode
+from redis_store import keys
 
 logger = logging.getLogger("rdpproxy.metrics")
 
@@ -125,11 +126,12 @@ class MetricsCollector:
 
     def _publish_redis(self, snap: dict[str, Any]) -> None:
         raw = json.dumps(snap, ensure_ascii=False)
+        iid = self._instance_id
         pipe = self._redis.pipeline(transaction=False)
-        pipe.setex(f"rdp:metrics:{self._instance_id}:latest", 120, raw)
-        pipe.lpush(f"rdp:metrics:{self._instance_id}:series", raw)
-        pipe.ltrim(f"rdp:metrics:{self._instance_id}:series", 0, SERIES_MAX_LEN)
-        pipe.setex(f"rdp:heartbeat:{self._instance_id}", HEARTBEAT_REDIS_TTL, raw)
+        pipe.setex(keys.METRICS_LATEST.format(instance_id=iid), keys.METRICS_LATEST_TTL, raw)
+        pipe.lpush(keys.METRICS_SERIES.format(instance_id=iid), raw)
+        pipe.ltrim(keys.METRICS_SERIES.format(instance_id=iid), 0, SERIES_MAX_LEN)
+        pipe.setex(keys.HEARTBEAT.format(instance_id=iid), HEARTBEAT_REDIS_TTL, raw)
         pipe.execute()
 
     async def _heartbeat_pg(self, snap: dict[str, Any]) -> None:
@@ -161,7 +163,7 @@ class MetricsCollector:
 
     def _count_active_sessions(self) -> int:
         try:
-            return sum(1 for _ in self._redis.scan_iter(match="rdp:active:*", count=200))
+            return sum(1 for _ in self._redis.scan_iter(match=keys.ACTIVE_SCAN, count=200))
         except Exception:
             return 0
 

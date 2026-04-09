@@ -45,7 +45,6 @@ RDP Relay ─────────────────────► Tar
 ├── .env.example
 ├── .env                       # локальный runtime, gitignored
 ├── README.md
-├── styleguide.md              # детальный стайлгайд по дизайну ADC/Citrix Gateway
 ├── deploy/
 └── src/
 ```
@@ -72,6 +71,7 @@ RDP Relay ─────────────────────► Tar
   - `AdminUser`, `AdminAuditLog`
   - `ClusterNode` (состояние нод кластера)
 - `db/migrations/*`: Alembic environment и миграции.
+- `redis_store/keys.py`: централизованные Redis-ключи, паттерны и TTL для всего приложения.
 - `redis_store/client.py`: фабрика Redis-клиента.
 - `redis_store/sessions.py`: web/admin/rdp session lifecycle + fingerprint checks. Атомарные WATCH/pipeline для TOCTOU-безопасности. `AdminWebSessionData` содержит `allowed_ips`.
 - `redis_store/encryption.py`: AES-256-GCM helper.
@@ -79,7 +79,9 @@ RDP Relay ─────────────────────► Tar
 - `identity/ldap_auth.py`: LDAP/AD auth, поиск/резолвинг групп, password-change для LDAPS/STARTTLS. Поддерживает `user_filter` — дополнительный LDAP-фильтр при поиске пользователя (фильтрация по группе, OID `1.2.840.113556.1.4.1941` для вложенных подгрупп).
 - `rdp/*`: низкоуровневые RDP блоки (TPKT, X.224, MCS patch, CredSSP, RDP file generation).
 - `proxy_protocol/parser.py`: parser PP v1/v2 для реального IP.
-- `security/*`: Argon2, CSRF. (rate_limit.py удалён как мёртвый код)
+- `security/passwords.py`: Argon2 хэширование.
+- `security/csrf.py`: CSRF-защита.
+- `security/login_limiter.py`: унифицированный rate-limiter для portal и admin логинов (класс `LoginLimiter` + фабрики `portal_limiter`/`admin_limiter`).
 - `common/*`: structured logging, health helpers, async DNS resolver.
 
 ### 3.3 Сервисы (`src/services`)
@@ -89,7 +91,7 @@ RDP Relay ─────────────────────► Tar
 - `routes/auth.py`: login/logout и LDAP auth flow.
 - `routes/servers.py`: листинг доступных серверов и выдача `.rdp`.
 - `routes/health.py`: health endpoint.
-- `dependencies.py`: DI, session extraction, config/ldap access.
+- `dependencies.py`: DI, session extraction, config/ldap access. Добавлены `get_db_session()`, `get_redis_client()` для устранения дублирования в route-файлах.
 - `middleware/*`: security headers, correlation id, real-ip.
 - `templates/login.html`: единый шаблон auth + пользовательского портала:
   - страница входа использует фон `assets/images/ReceiverFullScreenBackground.jpg` с `background-size: cover`, класс `auth-html` на `<html>` и запасной цвет фона; высота вьюпорта через `100dvh` / `-webkit-fill-available` для уменьшения белой полосы на мобильных;

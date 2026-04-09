@@ -11,13 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models.admin_user import AdminUser
 from redis_store.sessions import AdminWebSessionData
 from security.passwords import hash_password
-from services.admin.dependencies import get_db_sessionmaker, require_admin
+from services.admin.dependencies import get_db_session, require_admin
 
 router = APIRouter(prefix="/api/admin/admin-users", tags=["admin-admin-users"])
-
-
-async def _db(request: Request) -> AsyncSession:
-    return get_db_sessionmaker(request)()
 
 
 class AdminUserOut(BaseModel):
@@ -83,7 +79,7 @@ async def list_admin_users(
     request: Request,
     _: AdminWebSessionData = Depends(require_admin),
 ) -> list[AdminUserOut]:
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         rows = await session.execute(sa.select(AdminUser).order_by(AdminUser.username))
         return [_to_out(u) for u in rows.scalars().all()]
@@ -97,7 +93,7 @@ async def create_admin_user(
     body: AdminUserCreate,
     _: AdminWebSessionData = Depends(require_admin),
 ) -> AdminUserOut:
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         exists = await session.execute(
             sa.select(sa.func.count(AdminUser.id)).where(sa.func.lower(AdminUser.username) == body.username.strip().lower())
@@ -128,10 +124,10 @@ async def update_admin_user(
 ) -> AdminUserOut:
     try:
         uid = uuid.UUID(user_id)
-    except Exception as exc:
+    except (ValueError, AttributeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid user id") from exc
 
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         u = await session.get(AdminUser, uid)
         if u is None:
@@ -141,7 +137,7 @@ async def update_admin_user(
             if str(uid) == admin.admin_user_id:
                 raise HTTPException(status_code=400, detail="Нельзя отключить свою учётную запись")
             active_cnt = await session.scalar(
-                sa.select(sa.func.count(AdminUser.id)).where(AdminUser.is_active == True)  # noqa: E712
+                sa.select(sa.func.count(AdminUser.id)).where(AdminUser.is_active.is_(True))
             )
             if int(active_cnt or 0) <= 1:
                 raise HTTPException(status_code=400, detail="Нельзя отключить последнего активного администратора")
@@ -166,10 +162,10 @@ async def reset_admin_password(
 ) -> dict[str, str]:
     try:
         uid = uuid.UUID(user_id)
-    except Exception as exc:
+    except (ValueError, AttributeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid user id") from exc
 
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         u = await session.get(AdminUser, uid)
         if u is None:
@@ -190,20 +186,20 @@ async def delete_admin_user(
 ) -> None:
     try:
         uid = uuid.UUID(user_id)
-    except Exception as exc:
+    except (ValueError, AttributeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid user id") from exc
 
     if str(uid) == admin.admin_user_id:
         raise HTTPException(status_code=400, detail="Нельзя удалить свою учётную запись")
 
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         u = await session.get(AdminUser, uid)
         if u is None:
             raise HTTPException(status_code=404, detail="Not found")
         if u.is_active:
             active_cnt = await session.scalar(
-                sa.select(sa.func.count(AdminUser.id)).where(AdminUser.is_active == True)  # noqa: E712
+                sa.select(sa.func.count(AdminUser.id)).where(AdminUser.is_active.is_(True))
             )
             if int(active_cnt or 0) <= 1:
                 raise HTTPException(status_code=400, detail="Нельзя удалить последнего активного администратора")

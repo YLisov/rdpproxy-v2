@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 
+import redis as redis_lib
 from fastapi import HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -12,7 +13,7 @@ from config.loader import AppConfig
 from config.settings_manager import SettingsManager
 from redis_store.sessions import AdminWebSessionData, SessionStore
 
-_logger = logging.getLogger("rdpproxy.admin.deps")
+logger = logging.getLogger("rdpproxy.admin.deps")
 
 ADMIN_COOKIE_NAME = "rdp_admin_session"
 ADMIN_CSRF_COOKIE_NAME = "rdp_admin_csrf"
@@ -37,6 +38,16 @@ def get_db_sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:
     if factory is None:
         raise HTTPException(status_code=500, detail="Database not initialized")
     return factory
+
+
+async def get_db_session(request: Request) -> AsyncSession:
+    """Create a new async database session (caller must close it)."""
+    return get_db_sessionmaker(request)()
+
+
+def get_redis_client(request: Request) -> redis_lib.Redis:
+    """Return the raw Redis client from the session store."""
+    return get_session_store(request).client
 
 
 def get_client_ip(request: Request) -> str:
@@ -92,12 +103,12 @@ def require_admin(request: Request) -> AdminWebSessionData:
     cfg = get_config(request)
     allowed_nets = cfg.admin.allowed_networks
     if allowed_nets and not _ip_in_networks(client_ip, allowed_nets):
-        _logger.warning("Admin access denied for IP %s (not in allowed_networks)", client_ip)
+        logger.warning("Admin access denied for IP %s (not in allowed_networks)", client_ip)
         raise HTTPException(status_code=403, detail="Access denied from this IP")
 
     user_ips = sess.allowed_ips
     if user_ips and not _ip_in_networks(client_ip, user_ips):
-        _logger.warning("Admin %s access denied for IP %s (not in user allowed_ips)", sess.username, client_ip)
+        logger.warning("Admin %s access denied for IP %s (not in user allowed_ips)", sess.username, client_ip)
         raise HTTPException(status_code=403, detail="Access denied from this IP")
 
     return sess

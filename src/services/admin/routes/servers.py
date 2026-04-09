@@ -14,14 +14,9 @@ from sqlalchemy.orm import selectinload
 from db.models.server import RdpServer, ServerGroupBinding
 from db.models.settings import AdGroupCache
 from redis_store.sessions import AdminWebSessionData
-from services.admin.dependencies import get_db_sessionmaker, require_admin
+from services.admin.dependencies import get_db_session, require_admin
 
 router = APIRouter(prefix="/api/admin/servers", tags=["admin-servers"])
-
-
-async def _db(request: Request) -> AsyncSession:
-    return get_db_sessionmaker(request)()
-
 
 _ADDR_PORT_RE = re.compile(r"^(?P<host>[^:]+):(?P<port>\d{1,5})$")
 
@@ -56,7 +51,7 @@ def _parse_group_guids(values: list[str] | None) -> list[uuid.UUID]:
             continue
         try:
             out.append(uuid.UUID(s))
-        except Exception:
+        except (ValueError, AttributeError):
             raise HTTPException(status_code=400, detail=f"Invalid group GUID: {s}") from None
     return out
 
@@ -145,7 +140,7 @@ async def _load_group_name_map(session: AsyncSession, servers: list[RdpServer]) 
 
 @router.get("", response_model=list[ServerOut])
 async def list_servers(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> list[ServerOut]:
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         rows = await session.execute(sa.select(RdpServer).options(selectinload(RdpServer.group_bindings)).order_by(RdpServer.sort_order, RdpServer.tech_name))
         servers = list(rows.scalars().all())
@@ -164,7 +159,7 @@ async def create_server(
     host, p = _split_address(body.address, body.port)
     groups = _parse_group_guids(body.groups)
 
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         srv = RdpServer(
             tech_name=body.tech_name.strip(),
@@ -199,12 +194,12 @@ async def reorder_servers(
     body: ReorderBody,
     _: AdminWebSessionData = Depends(require_admin),
 ) -> dict[str, str]:
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         for i, sid in enumerate(body.order):
             try:
                 uid = uuid.UUID(str(sid).strip())
-            except Exception:
+            except (ValueError, AttributeError):
                 continue
             await session.execute(sa.update(RdpServer).where(RdpServer.id == uid).values(sort_order=i))
         await session.commit()
@@ -217,10 +212,10 @@ async def reorder_servers(
 async def get_server(request: Request, server_id: str, _: AdminWebSessionData = Depends(require_admin)) -> ServerOut:
     try:
         sid = uuid.UUID(server_id)
-    except Exception:
+    except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid server id") from None
 
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         row = await session.execute(sa.select(RdpServer).where(RdpServer.id == sid).options(selectinload(RdpServer.group_bindings)))
         srv = row.scalars().first()
@@ -241,10 +236,10 @@ async def update_server(
 ) -> ServerOut:
     try:
         sid = uuid.UUID(server_id)
-    except Exception:
+    except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid server id") from None
 
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         row = await session.execute(sa.select(RdpServer).where(RdpServer.id == sid).options(selectinload(RdpServer.group_bindings)))
         srv = row.scalars().first()
@@ -287,10 +282,10 @@ async def update_server(
 async def delete_server(request: Request, server_id: str, _: AdminWebSessionData = Depends(require_admin)) -> None:
     try:
         sid = uuid.UUID(server_id)
-    except Exception:
+    except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid server id") from None
 
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         row = await session.execute(sa.select(RdpServer).where(RdpServer.id == sid))
         srv = row.scalars().first()
@@ -306,10 +301,10 @@ async def delete_server(request: Request, server_id: str, _: AdminWebSessionData
 async def clone_server(request: Request, server_id: str, _: AdminWebSessionData = Depends(require_admin)) -> ServerOut:
     try:
         sid = uuid.UUID(server_id)
-    except Exception:
+    except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid server id") from None
 
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         row = await session.execute(sa.select(RdpServer).where(RdpServer.id == sid).options(selectinload(RdpServer.group_bindings)))
         src = row.scalars().first()
@@ -355,10 +350,10 @@ async def set_visibility(
 ) -> ServerOut:
     try:
         sid = uuid.UUID(server_id)
-    except Exception:
+    except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid server id") from None
 
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         row = await session.execute(sa.select(RdpServer).where(RdpServer.id == sid).options(selectinload(RdpServer.group_bindings)))
         srv = row.scalars().first()

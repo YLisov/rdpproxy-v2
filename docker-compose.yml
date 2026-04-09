@@ -96,6 +96,8 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
+    group_add:
+      - "988"
     networks:
       - rdpproxy
     depends_on:

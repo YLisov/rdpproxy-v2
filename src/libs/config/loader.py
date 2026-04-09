@@ -65,6 +65,7 @@ class AdminConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 9090
     allowed_networks: list[str] = Field(default_factory=lambda: ["10.120.0.0/24", "127.0.0.0/8"])
+    secure_cookies: bool = False
 
 
 class RdpRelayConfig(BaseModel):

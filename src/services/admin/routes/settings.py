@@ -10,7 +10,7 @@ from config.loader import LdapConfig
 from config.settings_manager import SettingsManager
 from identity.ldap_auth import LDAPAuthenticator
 from redis_store.sessions import AdminWebSessionData
-from services.admin.dependencies import get_settings_manager, get_session_store, require_admin
+from services.admin.dependencies import get_redis_client, get_settings_manager, require_admin
 
 router = APIRouter(prefix="/api/admin/settings", tags=["admin-settings"])
 logger = logging.getLogger("rdpproxy.admin.settings")
@@ -52,7 +52,7 @@ async def put_settings(
     _: AdminWebSessionData = Depends(require_admin),
 ) -> dict[str, str]:
     mgr = get_settings_manager(request)
-    redis_client = get_session_store(request).client
+    redis_client = get_redis_client(request)
 
     _ALLOWED_KEYS = _MERGE_KEYS | {"instance"}
     for k, v in (body.values or {}).items():

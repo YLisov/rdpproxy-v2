@@ -331,11 +331,11 @@ async def connect_and_authenticate(
     server_pub_key = _extract_raw_pubkey(spki_der)
 
     cipher = SPNEGOCipher(type3["flags"], exported_session_key)
-    signature, cripted_key = cipher.encrypt(server_pub_key)
+    signature, encrypted_key = cipher.encrypt(server_pub_key)
 
     ts3 = TSRequest()
     ts3["NegoData"] = _build_spnego_resp(type3.getData())
-    ts3["pubKeyAuth"] = signature.getData() + cripted_key
+    ts3["pubKeyAuth"] = signature.getData() + encrypted_key
     writer.write(ts3.get_data())
     await writer.drain()
     logger.info("Sent NTLM Type3 (SPNEGO-wrapped) + pubKeyAuth")
@@ -359,9 +359,9 @@ async def connect_and_authenticate(
     tsc["credType"] = 1
     tsc["credentials"] = tsp.get_data()
 
-    sig2, cripted_creds = cipher.encrypt(tsc.get_data())
+    sig2, encrypted_creds = cipher.encrypt(tsc.get_data())
     ts5 = TSRequest()
-    ts5["authInfo"] = sig2.getData() + cripted_creds
+    ts5["authInfo"] = sig2.getData() + encrypted_creds
     writer.write(ts5.get_data())
     await writer.drain()
     logger.info("Sent encrypted TSCredentials — CredSSP complete")

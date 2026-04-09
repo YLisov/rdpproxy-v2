@@ -7,8 +7,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
+from redis_store import keys
 from redis_store.sessions import AdminWebSessionData
-from services.admin.dependencies import get_session_store, require_admin
+from services.admin.dependencies import get_redis_client, require_admin
 
 router = APIRouter(prefix="/api/admin/cluster", tags=["admin-cluster"])
 
@@ -16,11 +17,11 @@ router = APIRouter(prefix="/api/admin/cluster", tags=["admin-cluster"])
 @router.get("/nodes")
 async def list_nodes(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> list[dict[str, Any]]:
     """List all cluster nodes from Redis heartbeats."""
-    store = get_session_store(request)
-    keys = list(store.client.scan_iter(match="rdp:node:*", count=100))
+    rc = get_redis_client(request)
+    node_keys = list(rc.scan_iter(match=keys.NODE_SCAN, count=100))
     nodes: list[dict[str, Any]] = []
-    for k in keys:
-        raw = store.client.get(k)
+    for k in node_keys:
+        raw = rc.get(k)
         if not raw:
             continue
         try:
@@ -33,8 +34,8 @@ async def list_nodes(request: Request, _: AdminWebSessionData = Depends(require_
 
 @router.get("/nodes/{instance_id}")
 async def get_node(request: Request, instance_id: str, _: AdminWebSessionData = Depends(require_admin)) -> dict[str, Any]:
-    store = get_session_store(request)
-    raw = store.client.get(f"rdp:node:{instance_id}")
+    rc = get_redis_client(request)
+    raw = rc.get(keys.NODE.format(instance_id=instance_id))
     if not raw:
         return {"error": "Node not found"}
     try:

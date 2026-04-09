@@ -8,6 +8,7 @@ import secrets
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from security.login_limiter import portal_limiter
 from services.portal.dependencies import (
     COOKIE_NAME,
     CSRF_COOKIE_NAME,
@@ -16,6 +17,7 @@ from services.portal.dependencies import (
     get_config,
     get_ldap,
     get_portal_name,
+    get_redis_client,
     get_session_store,
     get_settings_manager,
     is_ldap_configured,
@@ -48,41 +50,6 @@ async def _render_login_page(request: Request, error: str | None, status_code: i
     return response
 
 
-def _is_login_locked(request: Request, username: str) -> bool:
-    store = get_session_store(request)
-    ip = get_client_ip(request)
-    uname = username.strip().lower() or "_"
-    return bool(store.client.exists(f"rdp:lock:ip:{ip}") or store.client.exists(f"rdp:lock:user:{uname}"))
-
-
-def _record_failed_login(request: Request, username: str) -> None:
-    store = get_session_store(request)
-    mgr = get_settings_manager(request)
-    sec = mgr.security_params
-    limit = sec["login_attempts_per_minute"]
-    lock_seconds = sec["login_lock_seconds"]
-    ip = get_client_ip(request)
-    uname = username.strip().lower() or "_"
-    rc = store.client
-    ip_key = f"rdp:fail:ip:{ip}"
-    user_key = f"rdp:fail:user:{uname}"
-    ip_cnt = rc.incr(ip_key)
-    user_cnt = rc.incr(user_key)
-    rc.expire(ip_key, 60)
-    rc.expire(user_key, 60)
-    if ip_cnt > limit:
-        rc.setex(f"rdp:lock:ip:{ip}", lock_seconds, "1")
-    if user_cnt > limit:
-        rc.setex(f"rdp:lock:user:{uname}", lock_seconds, "1")
-
-
-def _clear_failed_login(username: str, request: Request) -> None:
-    store = get_session_store(request)
-    ip = get_client_ip(request)
-    uname = username.strip().lower() or "_"
-    store.client.delete(f"rdp:fail:ip:{ip}", f"rdp:fail:user:{uname}")
-
-
 @router.post("/login", response_class=HTMLResponse)
 async def login(
     request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(""),
@@ -95,7 +62,11 @@ async def login(
             status_code=400,
         )
 
-    if _is_login_locked(request, username):
+    rc = get_redis_client(request)
+    limiter = portal_limiter(rc)
+    ip = get_client_ip(request)
+
+    if limiter.is_locked(ip, username):
         return await _render_login_page(request, error="Слишком много попыток входа. Попробуйте позже.", status_code=429)
 
     if not is_ldap_configured(request):
@@ -110,11 +81,17 @@ async def login(
         user_info = ldap.authenticate(username=username.strip(), password=password)
     except Exception as exc:
         logger.warning("Login failed for username=%r: %s", username, exc)
-        _record_failed_login(request, username)
+        mgr = get_settings_manager(request)
+        sec = mgr.security_params
+        limiter.record_failure(
+            ip, username,
+            max_attempts=sec["login_attempts_per_minute"],
+            lock_seconds=sec["login_lock_seconds"],
+        )
         return await _render_login_page(request, error="Неверный логин или пароль.", status_code=401)
 
     store = get_session_store(request)
-    _clear_failed_login(username, request)
+    limiter.clear(ip, username)
     mgr = get_settings_manager(request)
     web_session_id = store.create_web_session(
         username=user_info.username, password=password,

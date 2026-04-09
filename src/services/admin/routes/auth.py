@@ -9,10 +9,11 @@ from datetime import datetime, timezone
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from db.models.admin_user import AdminUser
-from redis_store.sessions import AdminWebSessionData, SessionStore
+from redis_store.sessions import AdminWebSessionData
+from security.login_limiter import admin_limiter
 from security.passwords import hash_password, verify_password
 from services.admin.dependencies import (
     ADMIN_COOKIE_NAME,
@@ -21,6 +22,7 @@ from services.admin.dependencies import (
     get_client_ip,
     get_config,
     get_db_sessionmaker,
+    get_redis_client,
     get_session_store,
     require_admin,
 )
@@ -48,43 +50,9 @@ async def _render_login_page(request: Request, error: str | None, status_code: i
         status_code=status_code,
     )
     cfg_obj = getattr(request.app.state, "config", None)
-    secure_flag = cfg_obj.proxy.secure_cookies if cfg_obj else False
+    secure_flag = cfg_obj.admin.secure_cookies if cfg_obj else False
     response.set_cookie(key=ADMIN_CSRF_COOKIE_NAME, value=csrf_token, httponly=False, secure=secure_flag, samesite="lax", max_age=600)
     return response
-
-
-def _is_locked(request: Request, username: str) -> bool:
-    store = get_session_store(request)
-    ip = get_client_ip(request)
-    uname = username.strip().lower() or "_"
-    return bool(store.client.exists(f"rdp:admin:lock:ip:{ip}") or store.client.exists(f"rdp:admin:lock:user:{uname}"))
-
-
-def _record_fail(request: Request, username: str) -> None:
-    store = get_session_store(request)
-    cfg = get_config(request)
-    limit = cfg.security.login_attempts_per_minute
-    lock_seconds = cfg.security.login_lock_seconds
-    ip = get_client_ip(request)
-    uname = username.strip().lower() or "_"
-    rc = store.client
-    ip_key = f"rdp:admin:fail:ip:{ip}"
-    user_key = f"rdp:admin:fail:user:{uname}"
-    ip_cnt = rc.incr(ip_key)
-    user_cnt = rc.incr(user_key)
-    rc.expire(ip_key, 60)
-    rc.expire(user_key, 60)
-    if ip_cnt > limit:
-        rc.setex(f"rdp:admin:lock:ip:{ip}", lock_seconds, "1")
-    if user_cnt > limit:
-        rc.setex(f"rdp:admin:lock:user:{uname}", lock_seconds, "1")
-
-
-def _clear_fail(username: str, request: Request) -> None:
-    store = get_session_store(request)
-    ip = get_client_ip(request)
-    uname = username.strip().lower() or "_"
-    store.client.delete(f"rdp:admin:fail:ip:{ip}", f"rdp:admin:fail:user:{uname}")
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -105,7 +73,12 @@ async def login_submit(
     csrf_cookie = request.cookies.get(ADMIN_CSRF_COOKIE_NAME, "")
     if not csrf_cookie or csrf_cookie != csrf_token:
         return await _render_login_page(request, error="Сессия формы истекла. Обновите страницу.", status_code=400)
-    if _is_locked(request, username):
+
+    rc = get_redis_client(request)
+    limiter = admin_limiter(rc)
+    ip = get_client_ip(request)
+
+    if limiter.is_locked(ip, username):
         return await _render_login_page(request, error="Слишком много попыток входа. Попробуйте позже.", status_code=429)
 
     factory = get_db_sessionmaker(request)
@@ -116,7 +89,11 @@ async def login_submit(
         row = await dbs.execute(sa.select(AdminUser).where(sa.func.lower(AdminUser.username) == uname.lower()))
         user = row.scalars().first()
         if user is None or not user.is_active or not verify_password(user.password_hash, password):
-            _record_fail(request, username)
+            limiter.record_failure(
+                ip, username,
+                max_attempts=cfg.security.login_attempts_per_minute,
+                lock_seconds=cfg.security.login_lock_seconds,
+            )
             return await _render_login_page(request, error="Неверный логин или пароль.", status_code=401)
         user.last_login_at = datetime.now(timezone.utc)
         await dbs.commit()
@@ -125,13 +102,13 @@ async def login_submit(
         must_change = bool(user.must_change_password)
         user_allowed_ips = list(user.allowed_ips or [])
 
-    _clear_fail(username, request)
+    limiter.clear(ip, username)
     web_session_id = store.create_admin_web_session(
         admin_user_id=admin_id, username=admin_name,
         must_change_password=must_change, browser_fingerprint=browser_fingerprint(request),
         allowed_ips=user_allowed_ips,
     )
-    secure_flag = cfg.proxy.secure_cookies
+    secure_flag = cfg.admin.secure_cookies
     response = RedirectResponse(url="/admin/change-password" if must_change else "/admin/dashboard", status_code=303)
     response.set_cookie(
         key=ADMIN_COOKIE_NAME, value=web_session_id, httponly=True, secure=secure_flag,
@@ -162,7 +139,7 @@ async def change_password_page(request: Request, admin: AdminWebSessionData = De
         {"admin": admin, "error": None, "csrf_token": csrf_token},
     )
     cfg_obj = getattr(request.app.state, "config", None)
-    secure_flag = cfg_obj.proxy.secure_cookies if cfg_obj else False
+    secure_flag = cfg_obj.admin.secure_cookies if cfg_obj else False
     response.set_cookie(key=ADMIN_CSRF_COOKIE_NAME, value=csrf_token, httponly=False, secure=secure_flag, samesite="lax", max_age=600)
     return response
 

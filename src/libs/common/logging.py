@@ -39,7 +39,7 @@ def setup_logging(*, level: str = "INFO", service: str = "rdpproxy") -> None:
     root.addHandler(handler)
     old_factory = logging.getLogRecordFactory()
 
-    def factory(*args, **kwargs):
+    def factory(*args: object, **kwargs: object) -> logging.LogRecord:
         record = old_factory(*args, **kwargs)
         record.service = service  # type: ignore[attr-defined]
         return record

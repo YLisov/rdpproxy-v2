@@ -9,11 +9,17 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.history import ConnectionEvent, ConnectionHistory
+from redis_store import keys
 from redis_store.sessions import AdminWebSessionData
-from services.admin.dependencies import get_config, get_db_sessionmaker, get_session_store, require_admin
+from services.admin.dependencies import (
+    get_config,
+    get_db_session,
+    get_db_sessionmaker,
+    get_redis_client,
+    require_admin,
+)
 
 router = APIRouter(prefix="/api/admin/sessions", tags=["admin-sessions"])
 
@@ -49,27 +55,18 @@ class ActiveSessionOut(BaseModel):
     quality_detail: QualityDetail | None = None
 
 
-async def _db(request: Request) -> AsyncSession:
-    return get_db_sessionmaker(request)()
-
-
-def _redis(request: Request):
-    return get_session_store(request).client
-
-
 @router.get("/active")
 async def active_sessions(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> list[ActiveSessionOut]:
-    redis = _redis(request)
-    keys = list(redis.scan_iter(match="rdp:active:*", count=200))
+    rc = get_redis_client(request)
+    active_keys = list(rc.scan_iter(match=keys.ACTIVE_SCAN, count=200))
     out: list[ActiveSessionOut] = []
-    for k in keys:
-        # format: rdp:active:{instance_id}:{connection_id}
+    for k in active_keys:
         parts = str(k).split(":")
         if len(parts) < 4:
             continue
         instance_id = parts[2]
         connection_id = parts[3]
-        raw = redis.get(k)
+        raw = rc.get(k)
         data: dict[str, Any] = {}
         if raw and str(raw) != "1":
             try:
@@ -114,7 +111,7 @@ async def sessions_history(
     per_page: int = Query(default=50, ge=1, le=200),
     _: AdminWebSessionData = Depends(require_admin),
 ) -> dict[str, Any]:
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         stmt = sa.select(ConnectionHistory).order_by(ConnectionHistory.started_at.desc())
         if exclude_active:
@@ -183,7 +180,7 @@ async def sessions_history(
 
 @router.get("/history/reasons")
 async def disconnect_reasons(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> list[str]:
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         rows = await session.execute(
             sa.select(sa.distinct(ConnectionHistory.disconnect_reason))
@@ -197,7 +194,7 @@ async def disconnect_reasons(request: Request, _: AdminWebSessionData = Depends(
 
 @router.get("/history.csv")
 async def sessions_history_csv(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> PlainTextResponse:
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         rows = (
             await session.execute(
@@ -248,7 +245,7 @@ async def session_detail(request: Request, connection_id: str, _: AdminWebSessio
         cid = uuid.UUID(connection_id)
     except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid connection_id") from None
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         row = await session.execute(sa.select(ConnectionHistory).where(ConnectionHistory.id == cid))
         item = row.scalars().first()
@@ -280,7 +277,7 @@ async def session_events(request: Request, connection_id: str, _: AdminWebSessio
         cid = uuid.UUID(connection_id)
     except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid connection_id") from None
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         rows = await session.execute(
             sa.select(ConnectionEvent)
@@ -302,18 +299,18 @@ async def session_events(request: Request, connection_id: str, _: AdminWebSessio
 
 @router.post("/kill-all")
 async def kill_all_sessions(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> dict[str, Any]:
-    redis = _redis(request)
-    keys = list(redis.scan_iter(match="rdp:active:*", count=200))
+    rc = get_redis_client(request)
+    active_keys = list(rc.scan_iter(match=keys.ACTIVE_SCAN, count=200))
     killed = 0
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
-        for k in keys:
+        for k in active_keys:
             parts = str(k).split(":")
             if len(parts) < 4:
                 continue
             connection_id = parts[3]
-            redis.setex(f"rdp:kill:{connection_id}", 60, "1")
-            redis.delete(k)
+            rc.setex(keys.KILL_SESSION.format(connection_id=connection_id), keys.KILL_TTL, "1")
+            rc.delete(k)
             await session.execute(
                 sa.update(ConnectionHistory)
                 .where(ConnectionHistory.id == uuid.UUID(connection_id), ConnectionHistory.status == "active")
@@ -333,12 +330,12 @@ async def kill_session(request: Request, connection_id: str, _: AdminWebSessionD
     except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid connection_id") from None
 
-    redis = _redis(request)
+    rc = get_redis_client(request)
     instance_id = str(get_config(request).instance.id)
-    redis.setex(f"rdp:kill:{connection_id}", 60, "1")
-    redis.delete(f"rdp:active:{instance_id}:{connection_id}")
+    rc.setex(keys.KILL_SESSION.format(connection_id=connection_id), keys.KILL_TTL, "1")
+    rc.delete(keys.ACTIVE_SESSION.format(instance_id=instance_id, connection_id=connection_id))
 
-    session = await _db(request)
+    session = await get_db_session(request)
     try:
         await session.execute(
             sa.update(ConnectionHistory)

@@ -11,6 +11,7 @@ from common.logging import setup_logging
 from config.loader import load_config
 from config.settings_manager import SettingsManager
 from db.engine import build_session_factory
+from redis_store import keys
 from redis_store.active_tracker import ConnectionTracker
 from redis_store.client import create_redis_client
 from redis_store.sessions import SessionStore
@@ -32,7 +33,7 @@ async def _settings_listener(
     """Background task: listen for settings changes via Redis pub/sub."""
     try:
         pubsub = redis_client.pubsub()
-        pubsub.subscribe("rdp:settings:changed")
+        pubsub.subscribe(keys.SETTINGS_CHANGED_CHANNEL)
         while True:
             msg = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
             if msg and msg["type"] == "message":

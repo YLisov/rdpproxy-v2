@@ -13,6 +13,7 @@ from typing import Any
 
 import redis as redis_lib
 
+from redis_store import keys
 from services.rdp_relay.plugins.base import RdpPlugin, SessionContext
 
 logger = logging.getLogger("rdpproxy.relay.connection_quality")
@@ -185,7 +186,7 @@ class ConnectionQualityPlugin(RdpPlugin):
         return snapshot, total_retrans
 
     def _publish(self, connection_id: str, snapshot: QualitySnapshot) -> None:
-        key = f"rdp:active:{self._instance_id}:{connection_id}"
+        key = keys.ACTIVE_SESSION.format(instance_id=self._instance_id, connection_id=connection_id)
         try:
             with self._redis.pipeline() as pipe:
                 pipe.watch(key)
