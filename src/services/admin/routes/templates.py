@@ -4,7 +4,7 @@ import uuid
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -205,7 +205,7 @@ async def delete_template(request: Request, template_id: str, _: AdminWebSession
 @router.get("/preview")
 async def preview_template(
     request: Request,
-    groups: list[str] = [],
+    groups: list[str] = Query(default=[]),
     _: AdminWebSessionData = Depends(require_admin),
 ) -> dict[str, Any]:
     group_set = {str(v).strip().lower() for v in groups if str(v).strip()}

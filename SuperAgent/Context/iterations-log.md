@@ -1037,3 +1037,107 @@ docker compose up -d --build rdp-relay
 - Сообщение об ошибке обновлено: «Нельзя удалить последнего активного администратора»
 
 **Результат**: Теперь невозможно заблокировать доступ в админ-панель через UI — система гарантирует наличие хотя бы одного активного администратора.
+
+---
+## Итерация #35
+**Время начала**: 2026-04-09
+**Запрос**: Реализовать план исправления 24 уязвимостей безопасности
+
+### Группа A: Безопасность авторизации и сети
+
+**A1. Проверка allowed_ips и allowed_networks в require_admin**
+- `src/libs/redis_store/sessions.py` — добавлено поле `allowed_ips` в `AdminWebSessionData`, передаётся при создании/чтении admin-сессии
+- `src/services/admin/dependencies.py` — добавлена функция `_ip_in_networks()`, проверка `allowed_networks` из конфига и `allowed_ips` пользователя в `require_admin()`
+- `src/services/admin/routes/auth.py` — передача `user_allowed_ips` при создании сессии
+- `src/services/admin/routes/admin_users.py` — валидация IP/CIDR формата через `field_validator` в `AdminUserCreate` и `AdminUserUpdate`
+
+**A2. Унификация get_client_ip**
+- `src/services/portal/dependencies.py` — заменён get_client_ip на использование `request.state.client_ip` (установленного RealIpMiddleware)
+
+**A3. Cookie Secure flag**
+- `src/libs/config/loader.py` — добавлено поле `secure_cookies: bool = True` в `ProxyConfig`
+- `src/services/portal/routes/auth.py` — все cookie используют `cfg.proxy.secure_cookies`
+- `src/services/admin/routes/auth.py` — аналогично для всех admin cookie
+
+**A4. Redis пароль**
+- `.env` — установлен сгенерированный пароль `REDIS_PASSWORD`
+- `.env.example` — плейсхолдер `CHANGE_ME`
+- `docker-compose.yml` — `--requirepass ${REDIS_PASSWORD}` в команде Redis
+- `config.yaml` и `config.yaml.example` — пароль Redis
+
+**A5. PROXY Protocol spoofing**
+- `src/libs/config/loader.py` — добавлены `trusted_proxies` и `max_connections` в `RdpRelayConfig`
+- `src/services/rdp_relay/handler.py` — метод `_is_trusted_proxy()`, проверка IP перед чтением PP-заголовка
+
+### Группа B: Защита от DoS
+
+**B1. Лимит TCP-соединений**
+- `src/services/rdp_relay/main.py` — семафор `asyncio.Semaphore(max_connections)`, обёртка `_limited_handler`
+
+**B2. redis.keys() → scan_iter()**
+- Заменено в 6 местах: `stats.py`, `sessions.py` (2 места), `cluster.py`, `services_mgmt.py`, `collector.py`
+
+**B3. Пагинация с ограничениями**
+- `src/services/admin/routes/sessions.py` — `page: Query(ge=1, le=10000)`, `per_page: Query(ge=1, le=200)`
+
+### Группа C: XSS / CSRF / Headers
+
+**C1. Security headers для админки**
+- `src/services/admin/app.py` — подключен `SecurityHeadersMiddleware`
+
+**C2. CSRF на JSON API**
+- Создан `src/services/admin/middleware/csrf.py` — проверка Origin/X-Requested-With/Content-Type для мутирующих запросов на `/api/`
+- Подключен в `admin/app.py`
+
+**C3. Исправление esc()**
+- `admin_sessions.html`, `admin_templates.html`, `admin_dashboard.html` — добавлено экранирование `"` и `'`
+
+**C4. Template literal injection**
+- `admin_templates.html` — template literals заменены на конкатенацию с `esc()`
+
+### Группа D: Обработка ошибок и валидация
+
+**D1. Утечка исключений**
+- `settings.py` — `str(exc)` заменён на общие сообщения, логирование через `logger.warning`
+
+**D2. UUID валидация**
+- `sessions.py` — `uuid.UUID()` обёрнут в try/except с HTTPException 400 (3 места)
+
+**D3. kill_session порядок**
+- `sessions.py` — UUID валидация перед обращением к Redis
+
+**D4. json.loads обработка**
+- `cluster.py` — добавлен try/except для `json.JSONDecodeError`
+
+**D5. Мутабельный default**
+- `templates.py` — `groups: list[str] = []` → `Query(default=[])`
+
+**D6. Белый список настроек**
+- `settings.py` — проверка ключей по `_ALLOWED_KEYS` перед сохранением
+
+### Группа E: Логика и мёртвый код
+
+**E1. TOCTOU в Redis**
+- `src/libs/redis_store/sessions.py` — `set_token_fingerprint`, `get_web_session`, `get_admin_web_session` переведены на WATCH/pipeline
+- `src/services/rdp_relay/plugins/connection_quality.py` — `_publish` через pipeline с WATCH
+
+**E2. Интеграция is_idle()**
+- `src/services/rdp_relay/plugins/registry.py` — добавлен метод `get_plugin(type)`
+- `src/services/rdp_relay/handler.py` — `_kill_requested()` теперь проверяет `SessionMonitorPlugin.is_idle()`
+
+**E3. Удаление мёртвого кода**
+- Удалён `src/libs/security/rate_limit.py`
+
+### Группа F: Инфраструктура
+
+**F1. Docker USER + resource limits**
+- `Dockerfile` — добавлен `useradd appuser` + `USER appuser`
+- `docker-compose.yml` — добавлены `deploy.resources.limits` для всех 6 сервисов
+
+**F2. HAProxy TLS**
+- `deploy/haproxy/haproxy.cfg` — добавлены `ssl-default-bind-options` и `ssl-default-bind-ciphers`
+
+**F3. SPKI парсинг**
+- `src/libs/rdp/credssp.py` — добавлена функция `_extract_raw_pubkey()` с ASN.1 парсингом вместо `spki_der[24:]`
+
+**Результат**: Реализованы все 24 исправления безопасности из плана. Изменены ~30 файлов.

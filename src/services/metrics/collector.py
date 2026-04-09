@@ -161,7 +161,7 @@ class MetricsCollector:
 
     def _count_active_sessions(self) -> int:
         try:
-            return len(self._redis.keys("rdp:active:*"))
+            return sum(1 for _ in self._redis.scan_iter(match="rdp:active:*", count=200))
         except Exception:
             return 0
 

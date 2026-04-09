@@ -39,6 +39,7 @@ class AdminWebSessionData:
     admin_user_id: str
     username: str
     must_change_password: bool
+    allowed_ips: list[str] | None = None
 
 
 class SessionStore:
@@ -97,16 +98,24 @@ class SessionStore:
 
     def set_token_fingerprint(self, token: str, fingerprint: str) -> bool:
         key = f"rdp:token:{token}"
-        raw = self.client.get(key)
-        if not raw:
-            return False
-        payload = json.loads(raw)
-        payload["fingerprint"] = self._fingerprint_digest(fingerprint)
-        ttl = self.client.ttl(key)
-        if ttl <= 0:
-            return False
-        self.client.setex(key, ttl, json.dumps(payload))
-        return True
+        with self.client.pipeline() as pipe:
+            while True:
+                try:
+                    pipe.watch(key)
+                    raw = pipe.get(key)
+                    if not raw:
+                        return False
+                    payload = json.loads(raw)
+                    payload["fingerprint"] = self._fingerprint_digest(fingerprint)
+                    ttl = pipe.ttl(key)
+                    if ttl <= 0:
+                        return False
+                    pipe.multi()
+                    pipe.setex(key, ttl, json.dumps(payload))
+                    pipe.execute()
+                    return True
+                except redis_lib.WatchError:
+                    continue
 
     def token_fingerprint_matches(self, token: str, fingerprint: str) -> bool:
         raw = self.client.get(f"rdp:token:{token}")
@@ -142,23 +151,34 @@ class SessionStore:
 
     def get_web_session(self, session_id: str, browser_fingerprint: str) -> WebSessionData | None:
         key = f"rdp:web:{session_id}"
-        raw = self.client.get(key)
-        if not raw:
-            return None
-        payload = json.loads(raw)
-        expected_fp = payload.get("browser_fingerprint")
-        if expected_fp and expected_fp != self._fingerprint_digest(browser_fingerprint):
-            self.client.delete(key)
-            return None
-        now = int(time.time())
-        last_seen_ts = int(payload.get("last_seen_ts", now))
-        if now - last_seen_ts > self.web_idle_ttl:
-            self.client.delete(key)
-            return None
-        payload["last_seen_ts"] = now
-        ttl = self.client.ttl(key)
-        if ttl > 0:
-            self.client.setex(key, ttl, json.dumps(payload))
+        with self.client.pipeline() as pipe:
+            try:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                if not raw:
+                    return None
+                payload = json.loads(raw)
+                expected_fp = payload.get("browser_fingerprint")
+                if expected_fp and expected_fp != self._fingerprint_digest(browser_fingerprint):
+                    pipe.multi()
+                    pipe.delete(key)
+                    pipe.execute()
+                    return None
+                now = int(time.time())
+                last_seen_ts = int(payload.get("last_seen_ts", now))
+                if now - last_seen_ts > self.web_idle_ttl:
+                    pipe.multi()
+                    pipe.delete(key)
+                    pipe.execute()
+                    return None
+                payload["last_seen_ts"] = now
+                ttl = pipe.ttl(key)
+                if ttl > 0:
+                    pipe.multi()
+                    pipe.setex(key, ttl, json.dumps(payload))
+                    pipe.execute()
+            except redis_lib.WatchError:
+                pass
         aad = self._password_aad("rdp:web", session_id, payload["username"])
         return WebSessionData(
             session_id=session_id,
@@ -174,7 +194,8 @@ class SessionStore:
     # ── Admin web sessions ──
 
     def create_admin_web_session(
-        self, *, admin_user_id: str, username: str, must_change_password: bool, browser_fingerprint: str,
+        self, *, admin_user_id: str, username: str, must_change_password: bool,
+        browser_fingerprint: str, allowed_ips: list[str] | None = None,
     ) -> str:
         session_id = secrets.token_urlsafe(32)
         now = int(time.time())
@@ -184,34 +205,47 @@ class SessionStore:
             "must_change_password": bool(must_change_password),
             "browser_fingerprint": self._fingerprint_digest(browser_fingerprint),
             "last_seen_ts": now,
+            "allowed_ips": allowed_ips or [],
         }
         self.client.setex(f"rdp:admin:web:{session_id}", self.web_ttl, json.dumps(payload))
         return session_id
 
     def get_admin_web_session(self, session_id: str, browser_fingerprint: str) -> AdminWebSessionData | None:
         key = f"rdp:admin:web:{session_id}"
-        raw = self.client.get(key)
-        if not raw:
-            return None
-        payload = json.loads(raw)
-        expected_fp = payload.get("browser_fingerprint")
-        if expected_fp and expected_fp != self._fingerprint_digest(browser_fingerprint):
-            self.client.delete(key)
-            return None
-        now = int(time.time())
-        last_seen_ts = int(payload.get("last_seen_ts", now))
-        if now - last_seen_ts > self.web_idle_ttl:
-            self.client.delete(key)
-            return None
-        payload["last_seen_ts"] = now
-        ttl = self.client.ttl(key)
-        if ttl > 0:
-            self.client.setex(key, ttl, json.dumps(payload))
+        with self.client.pipeline() as pipe:
+            try:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                if not raw:
+                    return None
+                payload = json.loads(raw)
+                expected_fp = payload.get("browser_fingerprint")
+                if expected_fp and expected_fp != self._fingerprint_digest(browser_fingerprint):
+                    pipe.multi()
+                    pipe.delete(key)
+                    pipe.execute()
+                    return None
+                now = int(time.time())
+                last_seen_ts = int(payload.get("last_seen_ts", now))
+                if now - last_seen_ts > self.web_idle_ttl:
+                    pipe.multi()
+                    pipe.delete(key)
+                    pipe.execute()
+                    return None
+                payload["last_seen_ts"] = now
+                ttl = pipe.ttl(key)
+                if ttl > 0:
+                    pipe.multi()
+                    pipe.setex(key, ttl, json.dumps(payload))
+                    pipe.execute()
+            except redis_lib.WatchError:
+                pass
         return AdminWebSessionData(
             session_id=session_id,
             admin_user_id=str(payload["admin_user_id"]),
             username=str(payload["username"]),
             must_change_password=bool(payload.get("must_change_password")),
+            allowed_ips=payload.get("allowed_ips") or [],
         )
 
     def update_admin_must_change(self, session_id: str, must_change_password: bool) -> None:

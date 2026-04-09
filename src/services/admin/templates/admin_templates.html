@@ -90,7 +90,7 @@
 
   const state = { templates: [], selectedGroups: [], timer: null, schema: null, currentParams: {}, previewTimer: null };
   function setStatus(t, cls=''){ const e=document.getElementById('status'); e.className=cls; e.textContent=t; }
-  function esc(s){ return String(s||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+  function esc(s){ return String(s||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;'); }
   async function api(url, opts={}) {
     const r = await fetch(url, { headers: { 'Content-Type':'application/json' }, ...opts});
     if (r.status===204) return null;
@@ -347,7 +347,7 @@
     const editId = document.getElementById('templateId').value.trim();
     if (isDefault) {
       const existing = state.templates.find(t => t.is_default && t.id !== editId);
-      if (existing && !confirm(`Шаблон «${existing.name}» уже установлен по умолчанию. Заменить его на текущий?`)) return;
+      if (existing && !confirm('Шаблон «' + esc(existing.name) + '» уже установлен по умолчанию. Заменить его на текущий?')) return;
     }
     const payload = {
       name,
@@ -370,7 +370,7 @@
     if (!id) return;
     const tpl = state.templates.find(t => t.id === id);
     if (tpl && tpl.is_default) { setStatus('Нельзя удалить шаблон по умолчанию', 'error'); return; }
-    if (!confirm('Удалить шаблон' + (tpl ? ' «' + tpl.name + '»' : '') + '?')) return;
+    if (!confirm('Удалить шаблон' + (tpl ? ' «' + esc(tpl.name) + '»' : '') + '?')) return;
     await api('/api/admin/templates/' + encodeURIComponent(id), { method:'DELETE' });
     const editId = document.getElementById('templateId').value.trim();
     if (editId === id) resetForm();

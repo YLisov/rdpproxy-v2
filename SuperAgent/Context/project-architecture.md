@@ -55,7 +55,7 @@ RDP Relay ─────────────────────► Tar
 
 ### 3.2 Shared libs (`src/libs`)
 
-- `config/loader.py`: Pydantic-модель всего `config.yaml`. `ldap` сделан optional (`LdapConfig | None`) для поддержки первого запуска без LDAP. Добавлены deprecation warnings для полей, управляемых через БД.
+- `config/loader.py`: Pydantic-модель всего `config.yaml`. `ldap` сделан optional (`LdapConfig | None`) для поддержки первого запуска без LDAP. Добавлены deprecation warnings для полей, управляемых через БД. `ProxyConfig.secure_cookies`, `RdpRelayConfig.trusted_proxies`, `RdpRelayConfig.max_connections`.
 - `config/settings_manager.py`: Центральный класс `SettingsManager` для загрузки, кэширования и обновления настроек из таблицы `portal_settings`. Поддерживает:
   - TTL-кэш (30 сек) с автообновлением
   - Fallback к значениям из YAML
@@ -73,13 +73,13 @@ RDP Relay ─────────────────────► Tar
   - `ClusterNode` (состояние нод кластера)
 - `db/migrations/*`: Alembic environment и миграции.
 - `redis_store/client.py`: фабрика Redis-клиента.
-- `redis_store/sessions.py`: web/admin/rdp session lifecycle + fingerprint checks.
+- `redis_store/sessions.py`: web/admin/rdp session lifecycle + fingerprint checks. Атомарные WATCH/pipeline для TOCTOU-безопасности. `AdminWebSessionData` содержит `allowed_ips`.
 - `redis_store/encryption.py`: AES-256-GCM helper.
 - `redis_store/active_tracker.py`: трекинг активных сессий (Redis + PostgreSQL).
 - `identity/ldap_auth.py`: LDAP/AD auth, поиск/резолвинг групп, password-change для LDAPS/STARTTLS. Поддерживает `user_filter` — дополнительный LDAP-фильтр при поиске пользователя (фильтрация по группе, OID `1.2.840.113556.1.4.1941` для вложенных подгрупп).
 - `rdp/*`: низкоуровневые RDP блоки (TPKT, X.224, MCS patch, CredSSP, RDP file generation).
 - `proxy_protocol/parser.py`: parser PP v1/v2 для реального IP.
-- `security/*`: Argon2, CSRF, rate-limit.
+- `security/*`: Argon2, CSRF. (rate_limit.py удалён как мёртвый код)
 - `common/*`: structured logging, health helpers, async DNS resolver.
 
 ### 3.3 Сервисы (`src/services`)

@@ -14,20 +14,30 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     volumes:
       - redisdata:/data
     networks:
       - rdpproxy
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
     restart: unless-stopped
 
   haproxy:
@@ -48,6 +58,11 @@ services:
         condition: service_healthy
     sysctls:
       - net.ipv4.tcp_congestion_control=bbr
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '1.0'
     restart: unless-stopped
 
   portal:
@@ -68,6 +83,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
     restart: unless-stopped
 
   rdp-relay:
@@ -87,6 +107,11 @@ services:
       - net.ipv4.tcp_congestion_control=bbr
       - net.ipv4.tcp_rmem=4096 262144 16777216
       - net.ipv4.tcp_wmem=4096 262144 16777216
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2.0'
     restart: unless-stopped
 
   admin:
@@ -109,6 +134,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
     restart: unless-stopped
 
   metrics:
@@ -125,6 +155,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
     restart: unless-stopped
 
 volumes:

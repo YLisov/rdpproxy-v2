@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/admin/cluster", tags=["admin-cluster"])
 async def list_nodes(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> list[dict[str, Any]]:
     """List all cluster nodes from Redis heartbeats."""
     store = get_session_store(request)
-    keys = store.client.keys("rdp:node:*")
+    keys = list(store.client.scan_iter(match="rdp:node:*", count=100))
     nodes: list[dict[str, Any]] = []
     for k in keys:
         raw = store.client.get(k)
@@ -37,4 +37,7 @@ async def get_node(request: Request, instance_id: str, _: AdminWebSessionData = 
     raw = store.client.get(f"rdp:node:{instance_id}")
     if not raw:
         return {"error": "Node not found"}
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {"error": "Invalid data"}

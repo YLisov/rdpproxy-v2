@@ -187,12 +187,16 @@ class ConnectionQualityPlugin(RdpPlugin):
     def _publish(self, connection_id: str, snapshot: QualitySnapshot) -> None:
         key = f"rdp:active:{self._instance_id}:{connection_id}"
         try:
-            raw = self._redis.get(key)
-            data: dict[str, Any] = {}
-            if raw and raw != b"1":
-                data = json.loads(raw)
-            data["connection_quality"] = snapshot.rating
-            data["quality_detail"] = asdict(snapshot)
-            self._redis.set(key, json.dumps(data, ensure_ascii=False), ex=24 * 3600)
+            with self._redis.pipeline() as pipe:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                data: dict[str, Any] = {}
+                if raw and raw != b"1":
+                    data = json.loads(raw)
+                data["connection_quality"] = snapshot.rating
+                data["quality_detail"] = asdict(snapshot)
+                pipe.multi()
+                pipe.set(key, json.dumps(data, ensure_ascii=False), ex=24 * 3600)
+                pipe.execute()
         except Exception:
             logger.exception("Failed to publish quality for %s", connection_id)

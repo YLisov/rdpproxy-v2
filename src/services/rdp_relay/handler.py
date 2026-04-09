@@ -13,6 +13,7 @@ This module orchestrates an incoming RDP connection through:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import ssl
 from typing import Any
@@ -169,8 +170,16 @@ class RdpConnectionHandler:
             )
             await self._plugins.on_session_start(ctx)
 
+            from services.rdp_relay.plugins.session_monitor import SessionMonitorPlugin
+            _session_monitor = self._plugins.get_plugin(SessionMonitorPlugin)
+
             def _kill_requested() -> bool:
-                return bool(self._sessions.client.get(f"rdp:kill:{tracked_cid}"))
+                if bool(self._sessions.client.get(f"rdp:kill:{tracked_cid}")):
+                    return True
+                if _session_monitor and _session_monitor.is_idle():
+                    logger.info("Session %s terminated due to idle timeout", tracked_cid)
+                    return True
+                return False
 
             result: RelayResult = await relay_bidirectional(
                 client_reader, client_writer,
@@ -214,20 +223,37 @@ class RdpConnectionHandler:
                     logger.exception("Failed to finalize tracked connection %s", tracked_cid)
             abort_writer(client_writer)
 
+    def _is_trusted_proxy(self, ip_str: str) -> bool:
+        """Check if the given IP belongs to one of the configured trusted proxy networks."""
+        try:
+            addr = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return False
+        for net_str in self._cfg.rdp_relay.trusted_proxies:
+            try:
+                if addr in ipaddress.ip_network(net_str, strict=False):
+                    return True
+            except ValueError:
+                continue
+        return False
+
     async def _resolve_client_ip(
         self,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> str:
-        """Extract real client IP using Proxy Protocol v2 (always enabled)."""
-        if self._cfg.rdp_relay.proxy_protocol:
+        """Extract real client IP using Proxy Protocol v2 if sender is trusted."""
+        peer = writer.get_extra_info("peername")
+        peer_ip = str(peer[0]) if isinstance(peer, tuple) and peer else "unknown"
+
+        if self._cfg.rdp_relay.proxy_protocol and self._is_trusted_proxy(peer_ip):
             try:
                 pp_info = await read_proxy_protocol(reader)
                 logger.debug("Proxy Protocol: client=%s:%d", pp_info.src_addr, pp_info.src_port)
                 return pp_info.src_addr
             except Exception:
                 logger.warning("Failed to read Proxy Protocol header, falling back to peername")
-        peer = writer.get_extra_info("peername")
-        if isinstance(peer, tuple) and peer:
-            return str(peer[0])
-        return "unknown"
+        elif self._cfg.rdp_relay.proxy_protocol and not self._is_trusted_proxy(peer_ip):
+            logger.warning("PROXY Protocol enabled but peer %s is not a trusted proxy, ignoring PP", peer_ip)
+
+        return peer_ip

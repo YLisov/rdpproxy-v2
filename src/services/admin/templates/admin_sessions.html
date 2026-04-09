@@ -44,7 +44,7 @@
 <script>
   let rawItems = [];
   function esc(s) {
-    return String(s ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    return String(s ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
   }
   async function api(url, opts = {}) {
     const r = await fetch(url, { ...opts, headers: { 'Content-Type': 'application/json', ...opts.headers } });

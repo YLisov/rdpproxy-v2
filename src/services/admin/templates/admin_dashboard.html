@@ -58,7 +58,7 @@
     if (!r.ok) throw new Error(b.detail || r.status);
     return b;
   }
-  function esc(s) { return String(s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
   function fmtBytes(b) {
     if (b == null) return '—';
     const gb = b / (1024**3);

@@ -13,5 +13,8 @@ COPY src/ ./src/
 COPY assets/ ./assets/
 COPY alembic.ini .
 
+RUN useradd -r -s /bin/false appuser && chown -R appuser:appuser /app
+USER appuser
+
 ENV PYTHONPATH=/app/src/libs:/app/src
 ENV PYTHONUNBUFFERED=1

@@ -42,7 +42,9 @@ async def _render_login_page(request: Request, error: str | None, status_code: i
         {"session": None, "servers": [], "error": error, "csrf_token": csrf_token, "portal_name": portal_name},
         status_code=status_code,
     )
-    response.set_cookie(key=CSRF_COOKIE_NAME, value=csrf_token, httponly=False, secure=False, samesite="lax", max_age=600)
+    cfg = get_config(request)
+    secure_flag = cfg.proxy.secure_cookies
+    response.set_cookie(key=CSRF_COOKIE_NAME, value=csrf_token, httponly=False, secure=secure_flag, samesite="lax", max_age=600)
     return response
 
 
@@ -120,12 +122,14 @@ async def login(
         browser_fingerprint=browser_fingerprint(request),
     )
     ttl = mgr.redis_ttl
+    cfg = get_config(request)
+    secure_flag = cfg.proxy.secure_cookies
     response = RedirectResponse(url="/", status_code=303)
     response.set_cookie(
-        key=COOKIE_NAME, value=web_session_id, httponly=True, secure=False,
+        key=COOKIE_NAME, value=web_session_id, httponly=True, secure=secure_flag,
         samesite="lax", max_age=ttl.get("web_session_ttl", 28800),
     )
-    response.set_cookie(key=CSRF_COOKIE_NAME, value=_issue_csrf_token(), httponly=False, secure=False, samesite="lax", max_age=600)
+    response.set_cookie(key=CSRF_COOKIE_NAME, value=_issue_csrf_token(), httponly=False, secure=secure_flag, samesite="lax", max_age=600)
     return response
 
 

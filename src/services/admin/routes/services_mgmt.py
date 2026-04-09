@@ -19,7 +19,7 @@ logger = logging.getLogger("rdpproxy.admin.services")
 async def list_services(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> list[dict[str, Any]]:
     """Aggregate service status from all node heartbeats."""
     store = get_session_store(request)
-    keys = store.client.keys("rdp:node:*")
+    keys = list(store.client.scan_iter(match="rdp:node:*", count=100))
     services: list[dict[str, Any]] = []
     for k in keys:
         raw = store.client.get(k)

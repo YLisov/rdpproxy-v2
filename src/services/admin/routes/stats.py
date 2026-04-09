@@ -32,7 +32,7 @@ def _instance_id(request: Request) -> str:
 @router.get("/overview")
 async def overview(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> dict[str, Any]:
     redis = _redis(request)
-    keys = redis.keys("rdp:active:*")
+    keys = list(redis.scan_iter(match="rdp:active:*", count=200))
     today_start = datetime.combine(date.today(), time.min, tzinfo=timezone.utc)
     async with get_db_sessionmaker(request)() as db:
         row = await db.execute(

@@ -54,12 +54,9 @@ def is_ldap_configured(request: Request) -> bool:
 
 
 def get_client_ip(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        return xff.split(",")[0].strip()
-    real_ip = request.headers.get("x-real-ip", "")
-    if real_ip:
-        return real_ip.strip()
+    ip = getattr(request.state, "client_ip", None)
+    if ip:
+        return ip
     if request.client and request.client.host:
         return request.client.host
     return "unknown"

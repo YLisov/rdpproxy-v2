@@ -20,6 +20,8 @@ from redis_store.sessions import AdminWebSessionData, SessionStore
 from services.admin.dependencies import ADMIN_COOKIE_NAME, browser_fingerprint, require_admin
 
 from services.admin.middleware.audit import AuditMiddleware
+from services.admin.middleware.csrf import CsrfMiddleware
+from services.portal.middleware.security_headers import SecurityHeadersMiddleware
 from services.admin.routes import (
     ad_groups,
     admin_users,
@@ -115,6 +117,8 @@ def create_app(config: AppConfig) -> FastAPI:
         logger.info("Admin service settings loaded from DB")
 
     app.add_middleware(AuditMiddleware)
+    app.add_middleware(CsrfMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     @app.exception_handler(HTTPException)
     async def _html_unauthorized(request: Request, exc: HTTPException):

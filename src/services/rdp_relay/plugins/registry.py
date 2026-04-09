@@ -18,6 +18,12 @@ class PluginRegistry:
         for p in self._plugins:
             logger.info("Registered RDP plugin: %s", p.name)
 
+    def get_plugin(self, plugin_type: type) -> RdpPlugin | None:
+        for p in self._plugins:
+            if isinstance(p, plugin_type):
+                return p
+        return None
+
     async def on_session_start(self, ctx: SessionContext) -> None:
         for p in self._plugins:
             try:

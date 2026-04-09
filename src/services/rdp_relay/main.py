@@ -99,13 +99,25 @@ async def run_server() -> None:
         settings_manager=settings_mgr,
     )
 
+    max_conn = config.rdp_relay.max_connections
+    conn_semaphore = asyncio.Semaphore(max_conn)
+
+    async def _limited_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if conn_semaphore.locked():
+            logger.warning("Max connections (%d) reached, rejecting client", max_conn)
+            from services.rdp_relay.tcp_utils import abort_writer
+            abort_writer(writer)
+            return
+        async with conn_semaphore:
+            await handler(reader, writer)
+
     server = await asyncio.start_server(
-        handler,
+        _limited_handler,
         host=config.rdp_relay.host,
         port=config.rdp_relay.port,
     )
     addrs = ", ".join(str(s.getsockname()) for s in server.sockets)
-    logger.info("RDP Relay listening on %s", addrs)
+    logger.info("RDP Relay listening on %s (max_connections=%d)", addrs, max_conn)
 
     listener_task = asyncio.create_task(
         _settings_listener(redis_client, settings_mgr, handler, session_store)

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import ipaddress
 import uuid
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.admin_user import AdminUser
@@ -28,16 +29,37 @@ class AdminUserOut(BaseModel):
     last_login_at: str | None = None
 
 
+def _validate_ip_list(values: list[str]) -> list[str]:
+    for v in values:
+        try:
+            ipaddress.ip_network(v, strict=False)
+        except ValueError:
+            raise ValueError(f"Invalid IP or CIDR: {v}")
+    return values
+
+
 class AdminUserCreate(BaseModel):
     username: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=8, max_length=256)
     is_active: bool = True
     allowed_ips: list[str] = Field(default_factory=list)
 
+    @field_validator("allowed_ips")
+    @classmethod
+    def check_ips(cls, v: list[str]) -> list[str]:
+        return _validate_ip_list(v)
+
 
 class AdminUserUpdate(BaseModel):
     is_active: bool | None = None
     allowed_ips: list[str] | None = None
+
+    @field_validator("allowed_ips")
+    @classmethod
+    def check_ips(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            _validate_ip_list(v)
+        return v
 
 
 class AdminPasswordResetBody(BaseModel):

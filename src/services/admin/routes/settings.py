@@ -54,10 +54,13 @@ async def put_settings(
     mgr = get_settings_manager(request)
     redis_client = get_session_store(request).client
 
+    _ALLOWED_KEYS = _MERGE_KEYS | {"instance"}
     for k, v in (body.values or {}).items():
         key = str(k).strip()
         if not key:
             continue
+        if key not in _ALLOWED_KEYS:
+            raise HTTPException(status_code=400, detail=f"Unknown setting key: {key}")
         if not isinstance(v, dict):
             v = {"value": v}
         if key in _MERGE_KEYS:
@@ -86,7 +89,8 @@ async def ldap_check(
     try:
         ldap.list_groups(limit=1)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"LDAP check failed: {exc}") from None
+        logger.warning("LDAP check failed: %s", exc)
+        raise HTTPException(status_code=400, detail="Проверка LDAP завершилась ошибкой") from None
     return {"status": "ok"}
 
 
@@ -104,10 +108,12 @@ async def ldap_test(
     try:
         cfg = LdapConfig(**merged)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid LDAP config: {exc}") from None
+        logger.warning("Invalid LDAP config: %s", exc)
+        raise HTTPException(status_code=400, detail="Некорректная конфигурация LDAP") from None
     try:
         test_ldap = LDAPAuthenticator(cfg)
         test_ldap.list_groups(limit=1)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"LDAP test failed: {exc}") from None
+        logger.warning("LDAP test failed: %s", exc)
+        raise HTTPException(status_code=400, detail="Тест подключения LDAP завершился ошибкой") from None
     return {"status": "ok"}

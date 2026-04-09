@@ -37,6 +37,37 @@ logger = logging.getLogger("rdpproxy.credssp")
 NTLM_MECH_OID = TypesMech["NTLMSSP - Microsoft NTLM Security Support Provider"]
 
 
+def _extract_raw_pubkey(spki_der: bytes) -> bytes:
+    """Extract raw public key bytes from SubjectPublicKeyInfo DER, skipping AlgorithmIdentifier."""
+    if not spki_der or spki_der[0] != 0x30:
+        raise ValueError("Expected SEQUENCE tag in SPKI")
+    offset = 2
+    if spki_der[1] & 0x80:
+        n_len_bytes = spki_der[1] & 0x7F
+        offset += n_len_bytes
+    # skip AlgorithmIdentifier (SEQUENCE)
+    if spki_der[offset] != 0x30:
+        raise ValueError("Expected AlgorithmIdentifier SEQUENCE")
+    algo_len_byte = spki_der[offset + 1]
+    if algo_len_byte & 0x80:
+        n = algo_len_byte & 0x7F
+        algo_len = int.from_bytes(spki_der[offset + 2 : offset + 2 + n], "big")
+        offset += 2 + n + algo_len
+    else:
+        offset += 2 + algo_len_byte
+    # BIT STRING containing the public key
+    if spki_der[offset] != 0x03:
+        raise ValueError("Expected BIT STRING tag")
+    offset += 1
+    bit_len_byte = spki_der[offset]
+    offset += 1
+    if bit_len_byte & 0x80:
+        n = bit_len_byte & 0x7F
+        offset += n
+    offset += 1  # skip unused-bits byte
+    return spki_der[offset:]
+
+
 # ── TSRequest DER encoder/decoder ──
 
 class TSRequest:
@@ -297,7 +328,7 @@ async def connect_and_authenticate(
     cert_der = ssl_obj.getpeercert(binary_form=True)
     cert = cx509.load_der_x509_certificate(cert_der)
     spki_der = cert.public_key().public_bytes(encoding=serialization.Encoding.DER, format=serialization.PublicFormat.SubjectPublicKeyInfo)
-    server_pub_key = spki_der[24:]
+    server_pub_key = _extract_raw_pubkey(spki_der)
 
     cipher = SPNEGOCipher(type3["flags"], exported_session_key)
     signature, cripted_key = cipher.encrypt(server_pub_key)

@@ -53,6 +53,7 @@ class ProxyConfig(BaseModel):
     listen_port: int = 8443
     cert_path: str = ""
     key_path: str = ""
+    secure_cookies: bool = True
 
 
 class PortalConfig(BaseModel):
@@ -70,6 +71,8 @@ class RdpRelayConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8002
     proxy_protocol: bool = True
+    trusted_proxies: list[str] = Field(default_factory=lambda: ["172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16", "127.0.0.0/8"])
+    max_connections: int = 500
 
 
 class RedisConfig(BaseModel):

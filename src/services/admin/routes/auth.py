@@ -47,7 +47,9 @@ async def _render_login_page(request: Request, error: str | None, status_code: i
         {"error": error, "csrf_token": csrf_token, "portal_name": portal_name},
         status_code=status_code,
     )
-    response.set_cookie(key=ADMIN_CSRF_COOKIE_NAME, value=csrf_token, httponly=False, secure=False, samesite="lax", max_age=600)
+    cfg_obj = getattr(request.app.state, "config", None)
+    secure_flag = cfg_obj.proxy.secure_cookies if cfg_obj else False
+    response.set_cookie(key=ADMIN_CSRF_COOKIE_NAME, value=csrf_token, httponly=False, secure=secure_flag, samesite="lax", max_age=600)
     return response
 
 
@@ -121,18 +123,21 @@ async def login_submit(
         admin_id = str(user.id)
         admin_name = user.username
         must_change = bool(user.must_change_password)
+        user_allowed_ips = list(user.allowed_ips or [])
 
     _clear_fail(username, request)
     web_session_id = store.create_admin_web_session(
         admin_user_id=admin_id, username=admin_name,
         must_change_password=must_change, browser_fingerprint=browser_fingerprint(request),
+        allowed_ips=user_allowed_ips,
     )
+    secure_flag = cfg.proxy.secure_cookies
     response = RedirectResponse(url="/admin/change-password" if must_change else "/admin/dashboard", status_code=303)
     response.set_cookie(
-        key=ADMIN_COOKIE_NAME, value=web_session_id, httponly=True, secure=False,
+        key=ADMIN_COOKIE_NAME, value=web_session_id, httponly=True, secure=secure_flag,
         samesite="lax", max_age=cfg.redis.web_session_ttl,
     )
-    response.set_cookie(key=ADMIN_CSRF_COOKIE_NAME, value=_issue_csrf_token(), httponly=False, secure=False, samesite="lax", max_age=600)
+    response.set_cookie(key=ADMIN_CSRF_COOKIE_NAME, value=_issue_csrf_token(), httponly=False, secure=secure_flag, samesite="lax", max_age=600)
     return response
 
 
@@ -156,7 +161,9 @@ async def change_password_page(request: Request, admin: AdminWebSessionData = De
         request, "admin_change_password.html",
         {"admin": admin, "error": None, "csrf_token": csrf_token},
     )
-    response.set_cookie(key=ADMIN_CSRF_COOKIE_NAME, value=csrf_token, httponly=False, secure=False, samesite="lax", max_age=600)
+    cfg_obj = getattr(request.app.state, "config", None)
+    secure_flag = cfg_obj.proxy.secure_cookies if cfg_obj else False
+    response.set_cookie(key=ADMIN_CSRF_COOKIE_NAME, value=csrf_token, httponly=False, secure=secure_flag, samesite="lax", max_age=600)
     return response
 
 
