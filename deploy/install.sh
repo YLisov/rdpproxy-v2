@@ -69,6 +69,11 @@ setup_i18n() {
       MSG_REBOOT_HINT="Для применения обновлений ядра может потребоваться перезагрузка."
       MSG_HEALTH_FAIL="Сервис %s не поднялся за отведённое время."
       MSG_SELFSIGNED_WARN="Используется self-signed сертификат — браузер покажет предупреждение."
+      MSG_PORT80_CHECK="Проверка доступности порта 80..."
+      MSG_PORT80_BUSY="Порт 80 занят другим процессом. Остановите его и повторите установку, либо нажмите Enter для self-signed."
+      MSG_PORT80_BLOCKED="Порт 80 недоступен извне (firewall/security group). Откройте порт и нажмите Enter, либо просто Enter для self-signed."
+      MSG_PORT80_RETRY="Повторить проверку? (y/Enter — пропустить):"
+      MSG_PORT80_OK="Порт 80 доступен"
       ;;
     *)
       MSG_WELCOME="RDPProxy Installer"
@@ -114,6 +119,11 @@ setup_i18n() {
       MSG_REBOOT_HINT="A reboot may be required to apply kernel updates."
       MSG_HEALTH_FAIL="Service %s did not become healthy in time."
       MSG_SELFSIGNED_WARN="Using self-signed certificate — browser will show a warning."
+      MSG_PORT80_CHECK="Checking port 80 availability..."
+      MSG_PORT80_BUSY="Port 80 is in use by another process. Stop it and retry, or press Enter for self-signed."
+      MSG_PORT80_BLOCKED="Port 80 is not reachable from the internet (firewall/security group). Open it and press Enter, or just Enter for self-signed."
+      MSG_PORT80_RETRY="Retry check? (y / Enter to skip):"
+      MSG_PORT80_OK="Port 80 is available"
       ;;
   esac
 }
@@ -248,25 +258,64 @@ info ".env"
 
 USE_SELFSIGNED=false
 
-if [ -n "$DOMAIN" ]; then
-  step "$MSG_CERT_LE"
-  CERTBOT_ARGS=(certonly --standalone --non-interactive --agree-tos -d "$DOMAIN" --preferred-challenges http)
-  if [ -n "$LE_EMAIL" ]; then
-    CERTBOT_ARGS+=(--email "$LE_EMAIL")
-  else
-    CERTBOT_ARGS+=(--register-unsafely-without-email)
+check_port80() {
+  if ss -tlnp 2>/dev/null | grep -q ':80 '; then
+    warn "$MSG_PORT80_BUSY"
+    return 1
   fi
+  # Start a temporary listener, try to reach it from outside via the domain
+  python3 -m http.server 80 --bind 0.0.0.0 &>/dev/null &
+  local http_pid=$!
+  sleep 1
+  local rc=0
+  curl -sf --max-time 5 "http://${DOMAIN}/.well-known/acme-challenge/test" >/dev/null 2>&1 || rc=$?
+  kill "$http_pid" 2>/dev/null; wait "$http_pid" 2>/dev/null || true
+  if [ $rc -ne 0 ]; then
+    warn "$MSG_PORT80_BLOCKED"
+    return 1
+  fi
+  info "$MSG_PORT80_OK"
+  return 0
+}
 
-  if certbot "${CERTBOT_ARGS[@]}"; then
-    LE_DIR="/etc/letsencrypt/live/${DOMAIN}"
-    mkdir -p "${PROJECT_DIR}/deploy/haproxy/certs"
-    cat "${LE_DIR}/fullchain.pem" "${LE_DIR}/privkey.pem" \
-        > "${PROJECT_DIR}/deploy/haproxy/certs/rdp.pem"
-    CERT_PATH="${LE_DIR}/fullchain.pem"
-    KEY_PATH="${LE_DIR}/privkey.pem"
-    info "Let's Encrypt: ${DOMAIN}"
+if [ -n "$DOMAIN" ]; then
+  step "$MSG_PORT80_CHECK"
+  PORT80_OK=false
+  while true; do
+    if check_port80; then
+      PORT80_OK=true
+      break
+    fi
+    printf "\n  ${BOLD}%s${NC}\n" "$MSG_PORT80_RETRY"
+    read -rp "  > " PORT80_ANSWER < /dev/tty
+    case "${PORT80_ANSWER,,}" in
+      y|yes|д|да) continue ;;
+      *) break ;;
+    esac
+  done
+
+  if [ "$PORT80_OK" = true ]; then
+    step "$MSG_CERT_LE"
+    CERTBOT_ARGS=(certonly --standalone --non-interactive --agree-tos -d "$DOMAIN" --preferred-challenges http)
+    if [ -n "$LE_EMAIL" ]; then
+      CERTBOT_ARGS+=(--email "$LE_EMAIL")
+    else
+      CERTBOT_ARGS+=(--register-unsafely-without-email)
+    fi
+
+    if certbot "${CERTBOT_ARGS[@]}"; then
+      LE_DIR="/etc/letsencrypt/live/${DOMAIN}"
+      mkdir -p "${PROJECT_DIR}/deploy/haproxy/certs"
+      cat "${LE_DIR}/fullchain.pem" "${LE_DIR}/privkey.pem" \
+          > "${PROJECT_DIR}/deploy/haproxy/certs/rdp.pem"
+      CERT_PATH="${LE_DIR}/fullchain.pem"
+      KEY_PATH="${LE_DIR}/privkey.pem"
+      info "Let's Encrypt: ${DOMAIN}"
+    else
+      warn "$MSG_CERT_LE_FAIL"
+      USE_SELFSIGNED=true
+    fi
   else
-    warn "$MSG_CERT_LE_FAIL"
     USE_SELFSIGNED=true
   fi
 else
