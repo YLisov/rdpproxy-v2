@@ -1,47 +1,28 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models.settings import PortalSetting
+from config.loader import LdapConfig
+from config.settings_manager import SettingsManager
 from identity.ldap_auth import LDAPAuthenticator
 from redis_store.sessions import AdminWebSessionData
-from services.admin.dependencies import get_config, get_db_sessionmaker, require_admin
+from services.admin.dependencies import get_settings_manager, get_session_store, require_admin
 
 router = APIRouter(prefix="/api/admin/settings", tags=["admin-settings"])
+logger = logging.getLogger("rdpproxy.admin.settings")
 
-_MERGE_KEYS = frozenset({"ldap", "security", "proxy", "admin_security", "redis", "portal"})
+_MERGE_KEYS = frozenset({
+    "ldap", "security", "proxy",
+    "redis_ttl", "portal", "dns",
+})
 
 
 class SettingsPayload(BaseModel):
     values: dict[str, Any]
-
-
-async def _db(request: Request) -> AsyncSession:
-    return get_db_sessionmaker(request)()
-
-
-@router.get("")
-async def get_settings(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> dict[str, Any]:
-    session = await _db(request)
-    try:
-        rows = await session.execute(sa.select(PortalSetting))
-        out: dict[str, Any] = {}
-        for r in rows.scalars().all():
-            out[r.key] = r.value
-        # include current runtime config for convenience
-        cfg = get_config(request)
-        out.setdefault("ldap", cfg.ldap.model_dump())
-        out.setdefault("security", cfg.security.model_dump())
-        out.setdefault("proxy", cfg.proxy.model_dump())
-        out.setdefault("portal", {"name": "DC319"})
-        return out
-    finally:
-        await session.close()
 
 
 def _clean_dict(v: dict[str, Any]) -> dict[str, Any]:
@@ -55,48 +36,78 @@ def _clean_dict(v: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+@router.get("")
+async def get_settings(
+    request: Request,
+    _: AdminWebSessionData = Depends(require_admin),
+) -> dict[str, Any]:
+    mgr = get_settings_manager(request)
+    return mgr.get_all_for_ui()
+
+
 @router.put("")
-async def put_settings(request: Request, body: SettingsPayload, _: AdminWebSessionData = Depends(require_admin)) -> dict[str, str]:
-    session = await _db(request)
-    try:
-        for k, v in (body.values or {}).items():
-            key = str(k).strip()
-            if not key:
-                continue
-            row = await session.get(PortalSetting, key)
-            if isinstance(v, dict) and key in _MERGE_KEYS:
-                patch = _clean_dict(v)
-                if row is None:
-                    session.add(PortalSetting(key=key, value=patch))
-                else:
-                    old = row.value if isinstance(row.value, dict) else {}
-                    row.value = {**dict(old), **patch}
-            else:
-                if row is None:
-                    row = PortalSetting(key=key, value=v if isinstance(v, dict) else {"value": v})
-                    session.add(row)
-                else:
-                    row.value = v if isinstance(v, dict) else {"value": v}
-        await session.commit()
-        reapply = getattr(request.app.state, "reapply_portal_settings", None)
-        if callable(reapply):
-            try:
-                await reapply()
-            except Exception:
-                pass
-        return {"status": "ok"}
-    finally:
-        await session.close()
+async def put_settings(
+    request: Request,
+    body: SettingsPayload,
+    _: AdminWebSessionData = Depends(require_admin),
+) -> dict[str, str]:
+    mgr = get_settings_manager(request)
+    redis_client = get_session_store(request).client
+
+    for k, v in (body.values or {}).items():
+        key = str(k).strip()
+        if not key:
+            continue
+        if not isinstance(v, dict):
+            v = {"value": v}
+        if key in _MERGE_KEYS:
+            v = _clean_dict(v)
+
+        await mgr.save(key, v, publish_redis=redis_client)
+
+    reapply = getattr(request.app.state, "reapply_portal_settings", None)
+    if callable(reapply):
+        try:
+            await reapply()
+        except Exception:
+            logger.warning("reapply_portal_settings failed", exc_info=True)
+
+    return {"status": "ok"}
 
 
 @router.post("/ldap-check")
-async def ldap_check(request: Request, _: AdminWebSessionData = Depends(require_admin)) -> dict[str, str]:
+async def ldap_check(
+    request: Request,
+    _: AdminWebSessionData = Depends(require_admin),
+) -> dict[str, str]:
     ldap: LDAPAuthenticator | None = getattr(request.app.state, "ldap_auth", None)
     if ldap is None:
         raise HTTPException(status_code=500, detail="LDAP is not initialized")
-    # Try a benign operation using service bind.
     try:
         ldap.list_groups(limit=1)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"LDAP check failed: {exc}") from None
+    return {"status": "ok"}
+
+
+@router.post("/ldap-test")
+async def ldap_test(
+    request: Request,
+    body: SettingsPayload,
+    _: AdminWebSessionData = Depends(require_admin),
+) -> dict[str, str]:
+    """Validate LDAP connectivity with the provided (unsaved) settings."""
+    mgr = get_settings_manager(request)
+    current = await mgr.get("ldap")
+    merged = {**current, **_clean_dict(body.values.get("ldap", {}))}
+    merged.pop("bind_password_enc", None)
+    try:
+        cfg = LdapConfig(**merged)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid LDAP config: {exc}") from None
+    try:
+        test_ldap = LDAPAuthenticator(cfg)
+        test_ldap.list_groups(limit=1)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"LDAP test failed: {exc}") from None
     return {"status": "ok"}

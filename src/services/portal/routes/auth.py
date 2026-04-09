@@ -17,6 +17,8 @@ from services.portal.dependencies import (
     get_ldap,
     get_portal_name,
     get_session_store,
+    get_settings_manager,
+    is_ldap_configured,
 )
 
 router = APIRouter()
@@ -53,9 +55,10 @@ def _is_login_locked(request: Request, username: str) -> bool:
 
 def _record_failed_login(request: Request, username: str) -> None:
     store = get_session_store(request)
-    cfg = get_config(request)
-    limit = cfg.security.login_attempts_per_minute
-    lock_seconds = cfg.security.login_lock_seconds
+    mgr = get_settings_manager(request)
+    sec = mgr.security_params
+    limit = sec["login_attempts_per_minute"]
+    lock_seconds = sec["login_lock_seconds"]
     ip = get_client_ip(request)
     uname = username.strip().lower() or "_"
     rc = store.client
@@ -93,6 +96,13 @@ async def login(
     if _is_login_locked(request, username):
         return await _render_login_page(request, error="Слишком много попыток входа. Попробуйте позже.", status_code=429)
 
+    if not is_ldap_configured(request):
+        return await _render_login_page(
+            request,
+            error="Система не настроена. Обратитесь к администратору для настройки LDAP.",
+            status_code=503,
+        )
+
     ldap = get_ldap(request)
     try:
         user_info = ldap.authenticate(username=username.strip(), password=password)
@@ -103,16 +113,17 @@ async def login(
 
     store = get_session_store(request)
     _clear_failed_login(username, request)
-    cfg = get_config(request)
+    mgr = get_settings_manager(request)
     web_session_id = store.create_web_session(
         username=user_info.username, password=password,
         groups=user_info.groups, group_guids=user_info.group_guids,
         browser_fingerprint=browser_fingerprint(request),
     )
+    ttl = mgr.redis_ttl
     response = RedirectResponse(url="/", status_code=303)
     response.set_cookie(
         key=COOKIE_NAME, value=web_session_id, httponly=True, secure=False,
-        samesite="lax", max_age=cfg.redis.web_session_ttl,
+        samesite="lax", max_age=ttl.get("web_session_ttl", 28800),
     )
     response.set_cookie(key=CSRF_COOKIE_NAME, value=_issue_csrf_token(), httponly=False, secure=False, samesite="lax", max_age=600)
     return response

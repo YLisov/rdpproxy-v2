@@ -20,6 +20,8 @@ from services.portal.dependencies import (
     get_db_sessionmaker,
     get_portal_name,
     get_session_store,
+    get_settings_manager,
+    is_ldap_configured,
     require_session,
 )
 
@@ -59,10 +61,13 @@ async def index(request: Request) -> HTMLResponse:
     session = get_current_session(request)
     portal_name = await get_portal_name(request)
     if not session:
+        error = None
+        if not is_ldap_configured(request):
+            error = "Система не настроена. Обратитесь к администратору для настройки LDAP."
         csrf_token = request.cookies.get(CSRF_COOKIE_NAME) or secrets.token_urlsafe(24)
         response = templates.TemplateResponse(
             request, "login.html",
-            {"session": None, "servers": [], "error": None, "csrf_token": csrf_token, "portal_name": portal_name},
+            {"session": None, "servers": [], "error": error, "csrf_token": csrf_token, "portal_name": portal_name},
         )
         response.set_cookie(key=CSRF_COOKIE_NAME, value=csrf_token, httponly=False, secure=False, samesite="lax", max_age=600)
         return response
@@ -78,7 +83,8 @@ async def rdp_download(request: Request, server_id: str) -> PlainTextResponse:
     session = require_session(request)
     store = get_session_store(request)
     factory = get_db_sessionmaker(request)
-    cfg = get_config(request)
+    mgr = get_settings_manager(request)
+    proxy = mgr.proxy_params
 
     async with factory() as dbs:
         row = await dbs.execute(
@@ -102,7 +108,7 @@ async def rdp_download(request: Request, server_id: str) -> PlainTextResponse:
     async with factory() as dbs:
         content = await build_rdp_content(
             db_session=dbs, user_group_guids=session.group_guids,
-            proxy_host=cfg.proxy.public_host, proxy_port=cfg.proxy.listen_port, token=token,
+            proxy_host=proxy["public_host"], proxy_port=proxy["listen_port"], token=token,
         )
     headers = {"Content-Disposition": f'attachment; filename="{server_id}.rdp"'}
     return PlainTextResponse(content=content, media_type="application/x-rdp", headers=headers)

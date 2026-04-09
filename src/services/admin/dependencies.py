@@ -6,6 +6,7 @@ from fastapi import HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from config.loader import AppConfig
+from config.settings_manager import SettingsManager
 from redis_store.sessions import AdminWebSessionData, SessionStore
 
 ADMIN_COOKIE_NAME = "rdp_admin_session"
@@ -65,6 +66,13 @@ def require_admin(request: Request) -> AdminWebSessionData:
     if sess is None:
         raise HTTPException(status_code=401, detail="Session expired")
     return sess
+
+
+def get_settings_manager(request: Request) -> SettingsManager:
+    mgr: SettingsManager | None = getattr(request.app.state, "settings_manager", None)
+    if mgr is None:
+        raise HTTPException(status_code=500, detail="Settings manager not initialized")
+    return mgr
 
 
 def get_admin_session_optional(request: Request) -> AdminWebSessionData | None:

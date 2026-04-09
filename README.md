@@ -41,6 +41,20 @@ RDP-to-RDP proxy with web portal, admin panel, and cluster support.
 | **postgres**| 5432 | Primary database                           |
 | **redis**   | 6379 | Sessions, active connections, metrics      |
 
+## Configuration
+
+`config.yaml` contains only **bootstrap** parameters needed before the
+database is available: connection strings, encryption key, TLS
+certificate paths, and bind addresses.
+
+All other settings — LDAP, DNS, security, session TTLs, proxy host/port,
+RDP Relay options — are managed through the **admin panel → Settings** page
+and stored in the `portal_settings` table.
+
+On first startup the system automatically migrates any LDAP / DNS / etc.
+values from `config.yaml` into the database. After that, YAML values serve
+as read-only fallback only.
+
 ## Quick Start
 
 ```bash
@@ -50,7 +64,7 @@ cp .env.example .env
 # Edit .env: set DB_PASSWORD, LAN_IP
 
 cp config.yaml.example config.yaml
-# Edit config.yaml: LDAP, security.encryption_key, proxy paths
+# Edit config.yaml: database, redis, security.encryption_key, proxy cert paths
 
 # 2. Generate dev certificate (production: use Let's Encrypt)
 ./deploy/scripts/gen-dev-cert.sh
@@ -62,10 +76,9 @@ docker compose up -d
 docker compose run --rm -v "$(pwd)/src:/app/src" portal \
     alembic upgrade head
 
-# 5. Verify
-docker compose ps
-curl -sk https://localhost:8443/health
+# 5. Log in to admin panel and configure LDAP, DNS, etc.
 curl http://<LAN_IP>:9090/admin/login
+# Default admin: admin / admin
 ```
 
 ## Default Credentials
@@ -124,7 +137,7 @@ Opens port 8443 publicly, restricts 9090 to LAN only.
 rdpproxy-v2/
 ├── src/
 │   ├── libs/                  # Shared libraries
-│   │   ├── config/            # Pydantic config loader
+│   │   ├── config/            # Pydantic config loader + SettingsManager
 │   │   ├── db/                # SQLAlchemy models, engine, migrations
 │   │   ├── redis_store/       # Sessions, encryption, active tracker
 │   │   ├── identity/          # LDAP authenticator

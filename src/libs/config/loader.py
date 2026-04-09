@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import logging
 import pathlib
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger("rdpproxy.config")
+
+_DB_MANAGED_KEYS = frozenset({
+    "ldap", "dns", "security.token_fingerprint_enforce",
+    "security.login_attempts_per_minute", "security.login_lock_seconds",
+    "security.admin_groups", "proxy.public_host", "proxy.listen_port",
+    "redis.web_session_ttl", "redis.web_idle_ttl", "redis.rdp_token_ttl",
+})
 
 
 class InstanceConfig(BaseModel):
@@ -22,6 +32,7 @@ class LdapConfig(BaseModel):
     bind_password: str
     users_dn: str
     domain: str
+    user_filter: str = ""
 
 
 class DatabaseConfig(BaseModel):
@@ -83,7 +94,7 @@ class AppConfig(BaseModel):
     """Top-level validated application configuration."""
 
     instance: InstanceConfig = Field(default_factory=InstanceConfig)
-    ldap: LdapConfig
+    ldap: LdapConfig | None = None
     database: DatabaseConfig
     dns: DnsConfig = Field(default_factory=DnsConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
@@ -97,6 +108,20 @@ class AppConfig(BaseModel):
 DEFAULT_CONFIG_PATH = "/app/config.yaml"
 
 
+def _warn_deprecated_keys(data: dict[str, Any]) -> None:
+    """Log deprecation warnings for settings that are now DB-managed."""
+    if "ldap" in data:
+        logger.info(
+            "LDAP settings found in config.yaml — they will be used as initial seed "
+            "but are now managed through the admin panel"
+        )
+    if "dns" in data:
+        logger.info(
+            "'dns' in config.yaml is now managed via admin panel; "
+            "YAML values serve as fallback only",
+        )
+
+
 def load_config(path: str = DEFAULT_CONFIG_PATH) -> AppConfig:
     """Load YAML config file and return a validated AppConfig."""
     cfg_path = pathlib.Path(path)
@@ -104,4 +129,5 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> AppConfig:
         data = yaml.safe_load(f)
     if not isinstance(data, dict):
         raise ValueError("Config file must contain a YAML mapping at top level")
+    _warn_deprecated_keys(data)
     return AppConfig(**data)

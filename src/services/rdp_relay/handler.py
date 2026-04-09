@@ -19,6 +19,7 @@ from typing import Any
 
 from common.dns_resolver import DnsResolver
 from config.loader import AppConfig
+from config.settings_manager import SettingsManager
 from proxy_protocol.parser import read_proxy_protocol
 from rdp.credssp import connect_and_authenticate
 from rdp.tpkt import read_tpkt
@@ -54,12 +55,20 @@ class RdpConnectionHandler:
         tracker: ConnectionTracker,
         dns_resolver: DnsResolver,
         plugin_registry: PluginRegistry,
+        settings_manager: SettingsManager | None = None,
     ) -> None:
         self._cfg = config
         self._sessions = session_store
         self._tracker = tracker
         self._dns = dns_resolver
         self._plugins = plugin_registry
+        self._settings = settings_manager
+
+    def update_dns(self, resolver: DnsResolver) -> None:
+        self._dns = resolver
+
+    def update_settings(self, mgr: SettingsManager) -> None:
+        self._settings = mgr
 
     async def __call__(
         self,
@@ -81,7 +90,9 @@ class RdpConnectionHandler:
                 abort_writer(client_writer)
                 return
 
-            if self._cfg.security.token_fingerprint_enforce:
+            sec = self._settings.security_params if self._settings else {}
+            fp_enforce = sec.get("token_fingerprint_enforce", self._cfg.security.token_fingerprint_enforce)
+            if fp_enforce:
                 client_fp = build_rdp_client_fingerprint(x224_request, token)
                 if session.fingerprint:
                     if not self._sessions.token_fingerprint_matches(token, client_fp):
@@ -124,12 +135,19 @@ class RdpConnectionHandler:
             logger.info("Client TLS established (client=%s)", client_ip)
             await self._tracker.event(tracked_cid, "client_tls_established")
 
+            ldap_domain = ""
+            if self._settings:
+                ldap_cfg = self._settings.ldap
+                if ldap_cfg:
+                    ldap_domain = ldap_cfg.domain
+            if not ldap_domain and self._cfg.ldap:
+                ldap_domain = self._cfg.ldap.domain
             backend = await connect_and_authenticate(
                 target_host=resolved_host,
                 target_port=session.target_port,
                 username=session.username,
                 password=session.password,
-                fallback_domain=self._cfg.ldap.domain,
+                fallback_domain=ldap_domain,
             )
             configure_tcp_keepalive(backend.writer)
             await self._tracker.event(tracked_cid, "credssp_authenticated")
@@ -201,7 +219,7 @@ class RdpConnectionHandler:
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
     ) -> str:
-        """Extract real client IP, using Proxy Protocol if enabled."""
+        """Extract real client IP using Proxy Protocol v2 (always enabled)."""
         if self._cfg.rdp_relay.proxy_protocol:
             try:
                 pp_info = await read_proxy_protocol(reader)

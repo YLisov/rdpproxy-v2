@@ -874,3 +874,166 @@ docker compose up -d --build rdp-relay
 ### Действие 29.3 — stats.py: today_connections в overview API
 - Добавлен SQL-запрос `COUNT(*)` по `ConnectionHistory` за сегодняшний день (UTC)
 - Возвращается в ответе `overview` как `today_connections`
+
+---
+## Итерация #30
+**Время начала**: 2026-04-09
+**Запрос**: Миграция настроек из config.yaml в БД с управлением через админ-панель
+
+### Действие 30.1 — Создание SettingsManager
+**Создан файл `src/libs/config/settings_manager.py`**:
+- Класс `SettingsManager` — центральное хранилище динамических настроек
+- TTL-кэш 30 сек с автообновлением из `portal_settings`
+- Fallback к YAML при отсутствии ключа в БД
+- Seed при первом запуске: автоперенос из config.yaml в БД
+- Шифрование `bind_password` через `AESEncryptor`
+- Хуки горячей перезагрузки `on_change(key, callback)`
+- Типизированные свойства: `ldap`, `dns`, `proxy_params`, `security_params`, `redis_ttl`, `rdp_relay_params`, `admin_security`
+- Метод `get_all_for_ui()` для отдачи всех настроек в админку (без секретов)
+- Поддержка Redis pub/sub publish при сохранении
+
+### Действие 30.2 — Обновление config/loader.py
+**Изменён файл `src/libs/config/loader.py`**:
+- `AppConfig.ldap` стал `LdapConfig | None = None` (опциональный для первого запуска)
+- Добавлена функция `_warn_deprecated_keys()` — логирование при наличии DB-управляемых полей в YAML
+- Константа `_DB_MANAGED_KEYS` — перечень полей, управляемых через БД
+
+### Действие 30.3 — Интеграция SettingsManager в admin/app.py
+**Изменён файл `src/services/admin/app.py`**:
+- Создание `SettingsManager` при инициализации приложения
+- LDAP authenticator создается из DB-настроек (может быть `None`)
+- Хуки: `_on_ldap_change`, `_on_redis_ttl_change`, `_on_portal_change`
+- `_reapply_portal_settings` расширен: полная перезагрузка из БД + хуки
+- Startup event загружает настройки из БД и применяет TTL/LDAP
+
+### Действие 30.4 — Обновление admin/dependencies.py
+**Изменён файл `src/services/admin/dependencies.py`**:
+- Добавлен `get_settings_manager()` dependency
+
+### Действие 30.5 — Переписан settings.py API
+**Перезаписан файл `src/services/admin/routes/settings.py`**:
+- GET читает из `SettingsManager.get_all_for_ui()`
+- PUT сохраняет через `SettingsManager.save()` с Redis pub/sub
+- Добавлены ключи `dns`, `redis_ttl`, `rdp_relay` в `_MERGE_KEYS`
+- Добавлен endpoint `POST /ldap-test` для проверки LDAP с несохраненными параметрами
+
+### Действие 30.6 — Интеграция SettingsManager в Portal
+**Изменены файлы**:
+- `src/services/portal/app.py`: SettingsManager + хуки + фоновая задача Redis pub/sub listener
+- `src/services/portal/dependencies.py`: добавлены `get_settings_manager()`, `is_ldap_configured()`, `get_portal_name()` через SettingsManager
+- `src/services/portal/routes/auth.py`: rate limits из `settings_manager.security_params`, TTL из `settings_manager.redis_ttl`, проверка `is_ldap_configured`
+- `src/services/portal/routes/servers.py`: proxy params из `settings_manager.proxy_params`, проверка LDAP на главной странице
+
+### Действие 30.7 — Обработка первого запуска (LDAP не настроен)
+- В `portal/routes/auth.py`: login возвращает "Система не настроена" если LDAP = None
+- В `portal/routes/servers.py`: главная страница показывает ошибку если LDAP = None
+
+### Действие 30.8 — Интеграция SettingsManager в RDP Relay
+**Изменены файлы**:
+- `src/services/rdp_relay/main.py`: создание SettingsManager, фоновая задача `_settings_listener` (Redis pub/sub), обновление DNS resolver и handler при изменении настроек
+- `src/services/rdp_relay/handler.py`: добавлены методы `update_dns()`, `update_settings()`. Динамические параметры: `token_fingerprint_enforce`, `proxy_protocol`, `ldap.domain` — из SettingsManager
+
+### Действие 30.9 — Новые вкладки в админ-панели настроек
+**Перезаписан файл `src/services/admin/templates/admin_settings.html`**:
+- Добавлены вкладки: DNS (серверы, таймаут, TTL кэша), Сессии (web TTL, idle TTL, RDP token TTL), RDP Relay (proxy_protocol checkbox)
+- CSS-бейджи: `.apply-badge.hot` (зеленый, "Применяется сразу"), `.apply-badge.restart` (оранжевый, "Требует перезапуска")
+- JavaScript: сбор/отправка данных для DNS, sessions, relay вкладок
+
+### Действие 30.10 — Обновление config.yaml.example и README
+- `config.yaml.example`: только bootstrap-параметры (database, redis, security.encryption_key, proxy cert_path/key_path, bind addresses). LDAP/DNS/etc. в комментариях как пример seed.
+- `README.md`: добавлен раздел "Configuration" о новой архитектуре настроек, обновлен Quick Start
+
+**Результат**: Все настройки кроме bootstrap-параметров вынесены в БД и управляются через админ-панель. Горячая перезагрузка через Redis pub/sub. Обратная совместимость: seed из YAML при первом запуске.
+
+---
+## Итерация #31
+**Время начала**: 2026-04-09
+**Запрос**: Добавить фильтр пользователей в LDAP (ограничение входа по членству в группе, в т.ч. через вложенные подгруппы)
+
+### Действие 31.1 — LdapConfig: новое поле user_filter
+**Изменён файл `src/libs/config/loader.py`**:
+- Добавлено поле `user_filter: str = ""` в `LdapConfig`
+
+### Действие 31.2 — LDAPAuthenticator: применение фильтра
+**Изменён файл `src/libs/identity/ldap_auth.py`**:
+- Сохраняется `self.user_filter` из конфига
+- Новый метод `_build_user_search_filter(upn)`: комбинирует UPN-поиск с `user_filter` через AND
+- `authenticate()` и `find_user_dn()` используют `_build_user_search_filter` вместо жёсткого фильтра
+- Типичный пример: `(memberOf:1.2.840.113556.1.4.1941:=CN=RDP_Users,...)` — фильтр по вложенным группам
+
+### Действие 31.3 — Админ-панель: поле фильтра во вкладке LDAP
+**Изменён файл `src/services/admin/templates/admin_settings.html`**:
+- Добавлено поле «Фильтр пользователей (LDAP)» с placeholder-примером
+- Подсказка с описанием OID 1.2.840.113556.1.4.1941
+- JS: заполнение и сбор поля `user_filter` при загрузке/сохранении
+
+**Результат**: Администратор может задать LDAP-фильтр в настройках → LDAP, ограничивающий вход пользователей по членству в группе (включая вложенные подгруппы через AD Matching Rule in Chain). Пустой фильтр = доступ для всех.
+
+---
+## Итерация #32
+**Время начала**: 2026-04-09
+**Запрос**: Дефолты в UI-полях, убрать admin_security.allowed_networks, убрать proxy_protocol из UI (хардкод True)
+
+### Действие 32.1 — SettingsManager: удалены admin_security и rdp_relay
+**Изменён файл `src/libs/config/settings_manager.py`**:
+- `MANAGED_KEYS` сокращён до `("ldap", "dns", "proxy", "security", "redis_ttl", "portal")`
+- Удалены свойства `rdp_relay_params` и `admin_security`
+- `get_all_for_ui()` больше не возвращает `rdp_relay` и `admin_security`
+- `_get_fallback()` — убраны ветки `rdp_relay` и `admin_security`
+- `_seed_from_yaml()` — seed для `rdp_relay` и `admin_security` больше не выполняется
+
+### Действие 32.2 — handler.py: Proxy Protocol v2 всегда включён
+**Изменён файл `src/services/rdp_relay/handler.py`**:
+- `_resolve_client_ip()` — убрано динамическое чтение `rdp_relay_params` из SettingsManager
+- Proxy Protocol v2 теперь всегда включён через `self._cfg.rdp_relay.proxy_protocol` (хардкод `True` в Pydantic-модели `RdpRelayConfig`)
+
+### Действие 32.3 — Админ-панель: убраны вкладка RDP Relay и поле Разрешённые IP
+**Изменён файл `src/services/admin/templates/admin_settings.html`**:
+- Убрана вкладка «RDP Relay» из навигации и её панель целиком
+- Убрано текстовое поле «Разрешённые IP для админ-панели» из вкладки «Безопасность»
+- JS: убрано заполнение/сбор `admin_allowed_ips`, `relay_proxy_protocol`, убрана функция `parseIpList()`
+- При сохранении security больше не отправляется `admin_security`
+
+### Действие 32.4 — settings API: убраны ключи из _MERGE_KEYS
+**Изменён файл `src/services/admin/routes/settings.py`**:
+- `_MERGE_KEYS` = `{"ldap", "security", "proxy", "redis_ttl", "portal", "dns"}`
+
+### Действие 32.5 — loader.py: убраны deprecated-ключи
+**Изменён файл `src/libs/config/loader.py`**:
+- `_DB_MANAGED_KEYS` — убраны `rdp_relay.proxy_protocol` и `admin.allowed_networks`
+- `_warn_deprecated_keys()` — упрощена, больше не проверяет `admin.allowed_networks`
+
+**Результат**: Дефолтные значения seed-ятся в БД при первом запуске и отображаются в полях настроек. Proxy Protocol v2 захардкожен как всегда включённый. Настройка «Разрешённые IP для админ-панели» полностью убрана (мёртвая логика). IP-ограничения остались только на уровне пользователей-администраторов.
+
+---
+## Итерация #33
+**Время начала**: 2026-04-09
+**Запрос**: Поля «Веб-сессия» и «Таймаут бездействия» показывают только placeholder, а не значения по умолчанию
+
+### Действие 33.1 — _seed_from_yaml: дополнение неполных записей в БД
+**Изменён файл `src/libs/config/settings_manager.py`**:
+- `_seed_from_yaml()` теперь не пропускает ключи, уже имеющиеся в кеше (БД)
+- Для существующих записей проверяются недостающие подключи (сравнение с fallback-дефолтами)
+- Если подключи отсутствуют — они дописываются в запись БД и кеш (`logger.info("Patched missing subkeys ...")`)
+- Типичный сценарий: пользователь ранее сохранил только `rdp_token_ttl`, в БД `redis_ttl = {"rdp_token_ttl": 300}` без `web_session_ttl` и `web_idle_ttl`. Теперь при старте сервиса эти ключи дописываются из дефолтов
+
+**Результат**: При следующем запуске сервиса все неполные записи в `portal_settings` будут автоматически дополнены значениями по умолчанию. Поля «Веб-сессия» и «Таймаут бездействия» будут отображать дефолтные значения 28800 и 1800 как заполненные поля, а не placeholder.
+
+---
+## Итерация #34
+**Время начала**: 2026-04-09
+**Запрос**: Защита от отключения и удаления единственного активного администратора
+
+### Действие 34.1 — update_admin_user: защита от отключения последнего активного админа
+**Изменён файл `src/services/admin/routes/admin_users.py`**:
+- Параметр `_` переименован в `admin` для доступа к `admin.admin_user_id`
+- Добавлена проверка при `is_active=False`: нельзя отключить себя (`str(uid) == admin.admin_user_id`)
+- Добавлена проверка при `is_active=False`: подсчёт активных админов (`is_active == True`), если <= 1 — отказ с HTTP 400
+
+### Действие 34.2 — delete_admin_user: усилена проверка при удалении
+**Изменён файл `src/services/admin/routes/admin_users.py`**:
+- Проверка «последнего администратора» теперь считает только **активных** (`is_active == True`), а не всех
+- Проверка срабатывает только при удалении активного пользователя (`u.is_active`)
+- Сообщение об ошибке обновлено: «Нельзя удалить последнего активного администратора»
+
+**Результат**: Теперь невозможно заблокировать доступ в админ-панель через UI — система гарантирует наличие хотя бы одного активного администратора.

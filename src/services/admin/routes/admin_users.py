@@ -102,7 +102,7 @@ async def update_admin_user(
     request: Request,
     user_id: str,
     body: AdminUserUpdate,
-    _: AdminWebSessionData = Depends(require_admin),
+    admin: AdminWebSessionData = Depends(require_admin),
 ) -> AdminUserOut:
     try:
         uid = uuid.UUID(user_id)
@@ -114,6 +114,16 @@ async def update_admin_user(
         u = await session.get(AdminUser, uid)
         if u is None:
             raise HTTPException(status_code=404, detail="Not found")
+
+        if body.is_active is False and u.is_active:
+            if str(uid) == admin.admin_user_id:
+                raise HTTPException(status_code=400, detail="Нельзя отключить свою учётную запись")
+            active_cnt = await session.scalar(
+                sa.select(sa.func.count(AdminUser.id)).where(AdminUser.is_active == True)  # noqa: E712
+            )
+            if int(active_cnt or 0) <= 1:
+                raise HTTPException(status_code=400, detail="Нельзя отключить последнего активного администратора")
+
         if body.is_active is not None:
             u.is_active = bool(body.is_active)
         if body.allowed_ips is not None:
@@ -166,12 +176,15 @@ async def delete_admin_user(
 
     session = await _db(request)
     try:
-        cnt = await session.scalar(sa.select(sa.func.count(AdminUser.id)))
-        if int(cnt or 0) <= 1:
-            raise HTTPException(status_code=400, detail="Нельзя удалить последнего администратора")
         u = await session.get(AdminUser, uid)
         if u is None:
             raise HTTPException(status_code=404, detail="Not found")
+        if u.is_active:
+            active_cnt = await session.scalar(
+                sa.select(sa.func.count(AdminUser.id)).where(AdminUser.is_active == True)  # noqa: E712
+            )
+            if int(active_cnt or 0) <= 1:
+                raise HTTPException(status_code=400, detail="Нельзя удалить последнего активного администратора")
         await session.delete(u)
         await session.commit()
     finally:

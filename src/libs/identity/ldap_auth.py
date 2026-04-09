@@ -30,6 +30,7 @@ class LDAPAuthenticator:
         self.bind_password = cfg.bind_password
         self.users_dn = cfg.users_dn
         self.domain = cfg.domain
+        self.user_filter = (cfg.user_filter or "").strip()
         tls_verify = cfg.tls_verify
         self._tls = Tls(validate=ssl.CERT_REQUIRED if tls_verify else ssl.CERT_NONE)
         self._base_dn = self._derive_base_dn(self.users_dn)
@@ -108,17 +109,36 @@ class LDAPAuthenticator:
             raise ValueError("LDAP bind failed")
         return conn
 
+    def _build_user_search_filter(self, upn: str) -> str:
+        """Build LDAP search filter, combining UPN lookup with optional user_filter.
+
+        The ``user_filter`` field accepts a raw LDAP filter expression that is
+        AND-ed with the UPN match.  Typical use-case — restrict access to
+        members of a specific AD group (including nested membership via the
+        ``LDAP_MATCHING_RULE_IN_CHAIN`` OID ``1.2.840.113556.1.4.1941``):
+
+            (memberOf:1.2.840.113556.1.4.1941:=CN=RDP_Users,OU=Groups,DC=example,DC=com)
+        """
+        safe_upn = escape_filter_chars(upn)
+        base = f"(userPrincipalName={safe_upn})"
+        if not self.user_filter:
+            return base
+        extra = self.user_filter
+        if not extra.startswith("("):
+            extra = f"({extra})"
+        return f"(&{base}{extra})"
+
     def authenticate(self, username: str, password: str) -> LDAPUserInfo:
         if not username or not password:
             raise ValueError("Username and password are required")
         upn = username if "@" in username else f"{username}@{self.domain}"
         server = self._build_server()
-        safe_upn = escape_filter_chars(upn)
+        search_filter = self._build_user_search_filter(upn)
         svc_conn = self._bind(server, user=self.bind_dn, password=self.bind_password)
         try:
             svc_conn.search(
                 search_base=self.users_dn,
-                search_filter=f"(userPrincipalName={safe_upn})",
+                search_filter=search_filter,
                 attributes=["distinguishedName", "memberOf", "sAMAccountName", "userPrincipalName"],
                 size_limit=1,
             )
@@ -206,13 +226,13 @@ class LDAPAuthenticator:
 
     def find_user_dn(self, username: str) -> str | None:
         upn = username if "@" in username else f"{username}@{self.domain}"
-        safe_upn = escape_filter_chars(upn)
+        search_filter = self._build_user_search_filter(upn)
         server = self._build_server()
         svc_conn = self._bind(server, user=self.bind_dn, password=self.bind_password)
         try:
             svc_conn.search(
                 search_base=self.users_dn,
-                search_filter=f"(userPrincipalName={safe_upn})",
+                search_filter=search_filter,
                 attributes=["distinguishedName"], size_limit=1,
             )
             if not svc_conn.entries:

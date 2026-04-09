@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-import sys
 
 from common.dns_resolver import DnsResolver
 from common.logging import setup_logging
 from config.loader import load_config
+from config.settings_manager import SettingsManager
 from db.engine import build_session_factory
 from redis_store.active_tracker import ConnectionTracker
 from redis_store.client import create_redis_client
@@ -23,6 +23,35 @@ from services.rdp_relay.plugins.session_monitor import SessionMonitorPlugin
 logger = logging.getLogger("rdpproxy.relay")
 
 
+async def _settings_listener(
+    redis_client,
+    settings_mgr: SettingsManager,
+    handler: RdpConnectionHandler,
+    session_store: SessionStore,
+) -> None:
+    """Background task: listen for settings changes via Redis pub/sub."""
+    try:
+        pubsub = redis_client.pubsub()
+        pubsub.subscribe("rdp:settings:changed")
+        while True:
+            msg = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if msg and msg["type"] == "message":
+                await settings_mgr.load()
+                dns_cfg = settings_mgr.dns
+                handler.update_dns(DnsResolver(dns_cfg))
+                handler.update_settings(settings_mgr)
+                ttl = settings_mgr.redis_ttl
+                session_store.web_ttl = ttl.get("web_session_ttl", session_store.web_ttl)
+                session_store.rdp_token_ttl = ttl.get("rdp_token_ttl", session_store.rdp_token_ttl)
+                session_store.web_idle_ttl = ttl.get("web_idle_ttl", session_store.web_idle_ttl)
+                logger.info("RDP Relay reloaded settings after pub/sub notification")
+            await asyncio.sleep(0.5)
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("Settings listener crashed")
+
+
 async def run_server() -> None:
     setup_logging()
     config = load_config()
@@ -31,7 +60,12 @@ async def run_server() -> None:
     redis_client = create_redis_client(config.redis)
     session_store = SessionStore(redis_client, config.redis, config.security)
     db_factory = build_session_factory(config.database)
-    dns_resolver = DnsResolver(config.dns)
+
+    settings_mgr = SettingsManager(db_factory, config, config.security.encryption_key)
+    await settings_mgr.load()
+
+    dns_resolver = DnsResolver(settings_mgr.dns)
+
     tracker = ConnectionTracker(
         db_sessionmaker=db_factory,
         redis_client=redis_client,
@@ -45,6 +79,11 @@ async def run_server() -> None:
             stale_redis,
         )
 
+    ttl = settings_mgr.redis_ttl
+    session_store.web_ttl = ttl.get("web_session_ttl", session_store.web_ttl)
+    session_store.rdp_token_ttl = ttl.get("rdp_token_ttl", session_store.rdp_token_ttl)
+    session_store.web_idle_ttl = ttl.get("web_idle_ttl", session_store.web_idle_ttl)
+
     plugins = PluginRegistry([
         McsPatchPlugin(),
         SessionMonitorPlugin(),
@@ -57,6 +96,7 @@ async def run_server() -> None:
         tracker=tracker,
         dns_resolver=dns_resolver,
         plugin_registry=plugins,
+        settings_manager=settings_mgr,
     )
 
     server = await asyncio.start_server(
@@ -66,6 +106,10 @@ async def run_server() -> None:
     )
     addrs = ", ".join(str(s.getsockname()) for s in server.sockets)
     logger.info("RDP Relay listening on %s", addrs)
+
+    listener_task = asyncio.create_task(
+        _settings_listener(redis_client, settings_mgr, handler, session_store)
+    )
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -79,6 +123,7 @@ async def run_server() -> None:
 
     await stop_event.wait()
     logger.info("Shutting down RDP Relay…")
+    listener_task.cancel()
     server.close()
     await server.wait_closed()
     redis_client.close()

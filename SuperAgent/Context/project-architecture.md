@@ -55,7 +55,15 @@ RDP Relay ─────────────────────► Tar
 
 ### 3.2 Shared libs (`src/libs`)
 
-- `config/loader.py`: Pydantic-модель всего `config.yaml`.
+- `config/loader.py`: Pydantic-модель всего `config.yaml`. `ldap` сделан optional (`LdapConfig | None`) для поддержки первого запуска без LDAP. Добавлены deprecation warnings для полей, управляемых через БД.
+- `config/settings_manager.py`: Центральный класс `SettingsManager` для загрузки, кэширования и обновления настроек из таблицы `portal_settings`. Поддерживает:
+  - TTL-кэш (30 сек) с автообновлением
+  - Fallback к значениям из YAML
+  - Seed при первом запуске: автоперенос из `config.yaml` в БД
+  - Шифрование секретов (LDAP bind_password) через `AESEncryptor`
+  - Хуки горячей перезагрузки (`on_change()`)
+  - Redis pub/sub оповещение других сервисов (`rdp:settings:changed`)
+  - Типизированные свойства: `ldap`, `dns`, `proxy_params`, `security_params`, `redis_ttl`
 - `db/engine.py`: async engine/session factory (`create_engine`, `create_sessionmaker`, `build_session_factory`).
 - `db/models/*`: предметные сущности:
   - `RdpServer`, `RdpTemplate`
@@ -68,7 +76,7 @@ RDP Relay ─────────────────────► Tar
 - `redis_store/sessions.py`: web/admin/rdp session lifecycle + fingerprint checks.
 - `redis_store/encryption.py`: AES-256-GCM helper.
 - `redis_store/active_tracker.py`: трекинг активных сессий (Redis + PostgreSQL).
-- `identity/ldap_auth.py`: LDAP/AD auth, поиск/резолвинг групп, password-change для LDAPS/STARTTLS.
+- `identity/ldap_auth.py`: LDAP/AD auth, поиск/резолвинг групп, password-change для LDAPS/STARTTLS. Поддерживает `user_filter` — дополнительный LDAP-фильтр при поиске пользователя (фильтрация по группе, OID `1.2.840.113556.1.4.1941` для вложенных подгрупп).
 - `rdp/*`: низкоуровневые RDP блоки (TPKT, X.224, MCS patch, CredSSP, RDP file generation).
 - `proxy_protocol/parser.py`: parser PP v1/v2 для реального IP.
 - `security/*`: Argon2, CSRF, rate-limit.
@@ -77,7 +85,7 @@ RDP Relay ─────────────────────► Tar
 ### 3.3 Сервисы (`src/services`)
 
 #### Portal (`services/portal`)
-- `app.py`: app factory, middleware stack, роуты.
+- `app.py`: app factory, middleware stack, роуты. Интегрирован `SettingsManager` с горячей перезагрузкой (LDAP, TTL). Фоновая задача `_settings_listener` подписана на Redis pub/sub `rdp:settings:changed`.
 - `routes/auth.py`: login/logout и LDAP auth flow.
 - `routes/servers.py`: листинг доступных серверов и выдача `.rdp`.
 - `routes/health.py`: health endpoint.
@@ -112,11 +120,11 @@ RDP Relay ─────────────────────► Tar
     - `Escape` закрывает drawer и режим поиска.
 
 #### Admin Settings (`services/admin/routes/settings.py` + `templates/admin_settings.html`)
-- Добавлен новый раздел настроек `portal` с полем **Наименование портала** (`portal.name`).
-- При отсутствии записи в БД используется дефолт `DC319`.
+- `settings.py` полностью переписан для работы через `SettingsManager`: GET читает из менеджера, PUT сохраняет через менеджер с publish в Redis pub/sub. Добавлен endpoint `POST /ldap-test` для проверки LDAP с несохраненными параметрами.
+- `admin_settings.html` расширен 7 вкладками: Общие, LDAP, DNS (новая), Безопасность, Сессии (новая), RDP Relay (новая), Администраторы. У каждой группы — цветная метка "Применяется сразу" (зеленая) или "Требует перезапуска" (оранжевая).
 
 #### Admin (`services/admin`)
-- `app.py`: app factory + HTML endpoints.
+- `app.py`: app factory + HTML endpoints. Интегрирован `SettingsManager` с хуками горячей перезагрузки для LDAP, Redis TTL и Portal name. LDAP authenticator создается из DB-настроек при старте.
 - `routes/auth.py`: admin login/logout/change password.
 - `routes/servers.py`, `templates.py`: CRUD серверов и шаблонов.
 - `routes/sessions.py`: активные/исторические сессии, kill. Модель `QualityDetail` (rtt_ms, rtt_var_ms, jitter_ms, retransmits, total_retrans, lost, cwnd, rating) и поле `quality_detail` в `ActiveSessionOut` — данные парсятся из Redis для эндпоинта `GET /api/admin/sessions/active`.
@@ -129,8 +137,8 @@ RDP Relay ─────────────────────► Tar
 - `middleware/audit.py`: аудит мутаций API.
 
 #### RDP Relay (`services/rdp_relay`)
-- `main.py`: TCP listener и graceful shutdown.
-- `handler.py`: полный lifecycle одной RDP-сессии:
+- `main.py`: TCP listener и graceful shutdown. Интегрирован `SettingsManager` с фоновой задачей `_settings_listener` (Redis pub/sub). DNS resolver и настройки handler обновляются на лету.
+- `handler.py`: полный lifecycle одной RDP-сессии. Динамические параметры (token_fingerprint_enforce, ldap.domain) читаются из `SettingsManager`. Proxy Protocol v2 всегда включён (хардкод). Методы `update_dns()` и `update_settings()` для горячей подмены.
   - optional PPv2 read
   - token extraction + `extract_requested_protocols` из X.224 CR клиента
   - X.224 confirm
@@ -171,7 +179,7 @@ RDP Relay ─────────────────────► Tar
 
 ```
 services.portal
-  ├── libs.config
+  ├── libs.config (loader + settings_manager)
   ├── libs.identity.ldap_auth
   ├── libs.redis_store.sessions
   ├── libs.db.models + libs.db.engine
@@ -179,7 +187,7 @@ services.portal
   └── libs.security.*
 
 services.admin
-  ├── libs.config
+  ├── libs.config (loader + settings_manager)
   ├── libs.identity.ldap_auth
   ├── libs.redis_store.sessions + active_tracker
   ├── libs.db.models + libs.db.engine
@@ -187,7 +195,7 @@ services.admin
   └── libs.security.*
 
 services.rdp_relay
-  ├── libs.config
+  ├── libs.config (loader + settings_manager)
   ├── libs.rdp.(tpkt/x224/mcs/credssp)
   ├── libs.proxy_protocol.parser
   ├── libs.redis_store.sessions + active_tracker

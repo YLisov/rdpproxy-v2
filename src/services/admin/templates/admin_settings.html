@@ -23,6 +23,9 @@
     .restart-banner { background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: none; align-items: center; gap: 12px; }
     .restart-banner.visible { display: flex; }
     .restart-banner span { flex: 1; color: #991b1b; font-size: 14px; }
+    .apply-badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; margin-left: 8px; vertical-align: middle; }
+    .apply-badge.hot { background: #dcfce7; color: #166534; }
+    .apply-badge.restart { background: #fef3c7; color: #92400e; }
 
     .admin-panel { max-width: 100%; }
     .admin-panel table { width: 100%; border-collapse: collapse; background: var(--card-bg); margin-bottom: 20px; }
@@ -41,23 +44,25 @@
   <div class="tabs">
     <button type="button" class="active" data-tab="general">Общие</button>
     <button type="button" data-tab="ldap">LDAP</button>
+    <button type="button" data-tab="dns">DNS</button>
     <button type="button" data-tab="security">Безопасность</button>
+    <button type="button" data-tab="sessions">Сессии</button>
     <button type="button" data-tab="admins">Администраторы</button>
   </div>
 
   <div id="panel-general" class="panel active">
-    <p class="hint">Наименование портала используется в теге <code>&lt;title&gt;</code> пользовательского портала и страницы входа.</p>
+    <p class="hint">Наименование портала используется в теге <code>&lt;title&gt;</code> пользовательского портала и страницы входа. <span class="apply-badge hot">Применяется сразу</span></p>
     <label>Наименование портала
       <input id="portal_name" type="text" maxlength="128" placeholder="DC319">
     </label>
-    <p class="hint">Публичный адрес и порт, которые подставляются в RDP-файл при скачивании. Смена порта требует перезапуска сервиса.</p>
+    <p class="hint">Публичный адрес и порт, которые подставляются в RDP-файл при скачивании. <span class="apply-badge hot">Адрес — сразу</span> <span class="apply-badge restart">Порт — перезапуск</span></p>
     <label>Публичный адрес (host) <input id="proxy_public_host" type="text" placeholder="rdp.example.com"></label>
     <label>Порт прослушивания <input id="proxy_listen_port" type="number" min="1" max="65535" placeholder="3389"></label>
     <div class="actions"><button type="button" class="save" data-save="general">Сохранить</button></div>
   </div>
 
   <div id="panel-ldap" class="panel">
-    <p class="hint">Параметры подключения к Active Directory / LDAP. Пустые поля не перезаписывают существующие значения. После сохранения соединение пересоздаётся без перезапуска.</p>
+    <p class="hint">Параметры подключения к Active Directory / LDAP. Пустые поля не перезаписывают существующие значения. <span class="apply-badge hot">Применяется сразу</span></p>
     <label>Адрес сервера <input id="ldap_server" type="text" placeholder="dc01.example.com"></label>
     <label>Режим подключения
       <select id="ldap_mode">
@@ -72,22 +77,49 @@
     <label>Пароль привязки <input id="ldap_bind_password" type="password" placeholder="оставьте пустым, чтобы не менять"></label>
     <label>Корень поиска пользователей (Base DN) <input id="ldap_users_dn" type="text" placeholder="OU=Users,DC=example,DC=com"></label>
     <label>Домен (NetBIOS) <input id="ldap_domain" type="text" placeholder="EXAMPLE"></label>
+    <label>Фильтр пользователей (LDAP)
+      <input id="ldap_user_filter" type="text" placeholder="(memberOf:1.2.840.113556.1.4.1941:=CN=RDP_Users,OU=Groups,DC=example,DC=com)">
+    </label>
+    <p class="hint" style="margin-top:-8px">Дополнительный LDAP-фильтр, который применяется при поиске пользователя. Используйте для ограничения входа по членству в группе (в т.ч. через вложенные подгруппы с OID <code>1.2.840.113556.1.4.1941</code>). Пустое поле — вход для всех пользователей.</p>
     <div class="actions">
       <button type="button" class="save" data-save="ldap">Сохранить</button>
       <button type="button" id="ldapCheckBtn" style="background:#fff;color:var(--text);border:1px solid var(--border)">Проверить подключение</button>
     </div>
   </div>
 
+  <div id="panel-dns" class="panel">
+    <p class="hint">DNS-серверы используются для разрешения имён RDP-серверов при подключении. <span class="apply-badge hot">Применяется сразу</span></p>
+    <label>DNS-серверы (по одному на строку)
+      <textarea id="dns_servers" placeholder="10.100.0.2&#10;10.100.0.3"></textarea>
+    </label>
+    <label>Таймаут запроса (секунды) <input id="dns_timeout" type="number" min="1" max="30" step="0.5" placeholder="3"></label>
+    <label>TTL кэша DNS (секунды) <input id="dns_cache_ttl" type="number" min="0" max="86400" placeholder="300"></label>
+    <div class="actions"><button type="button" class="save" data-save="dns">Сохранить</button></div>
+  </div>
+
   <div id="panel-security" class="panel">
-    <p class="hint">Параметры защиты от перебора паролей и привязки сессий.</p>
+    <p class="hint">Параметры защиты от перебора паролей и привязки сессий. <span class="apply-badge hot">Применяется сразу</span></p>
     <label>Максимум попыток входа в минуту <input id="sec_login_attempts" type="number" min="1" placeholder="10"></label>
     <label>Блокировка после превышения (секунды) <input id="sec_login_lock" type="number" min="1" placeholder="300"></label>
     <label class="inline-check"><input type="checkbox" id="sec_token_fp"> Привязка токена к устройству (fingerprint)</label>
-    <p class="hint" style="margin-top:16px">Список IP-адресов и подсетей (CIDR), с которых разрешён вход в админ-панель. Пусто — доступ без ограничений.</p>
-    <label>Разрешённые IP для админ-панели
-      <textarea id="admin_allowed_ips" placeholder="10.0.0.0/8&#10;192.168.1.10"></textarea>
-    </label>
     <div class="actions"><button type="button" class="save" data-save="security">Сохранить</button></div>
+  </div>
+
+  <div id="panel-sessions" class="panel">
+    <p class="hint">Время жизни сессий в Redis. Значения в секундах. <span class="apply-badge hot">Применяется к новым сессиям</span></p>
+    <label>Веб-сессия (max TTL)
+      <input id="ttl_web_session" type="number" min="60" placeholder="28800">
+      <span class="hint" style="margin:0">По умолчанию 28800 = 8 часов</span>
+    </label>
+    <label>Таймаут бездействия (idle)
+      <input id="ttl_web_idle" type="number" min="60" placeholder="1800">
+      <span class="hint" style="margin:0">По умолчанию 1800 = 30 минут</span>
+    </label>
+    <label>RDP-токен (время на подключение)
+      <input id="ttl_rdp_token" type="number" min="10" placeholder="300">
+      <span class="hint" style="margin:0">По умолчанию 300 = 5 минут</span>
+    </label>
+    <div class="actions"><button type="button" class="save" data-save="sessions">Сохранить</button></div>
   </div>
 
   <div id="panel-admins" class="panel admin-panel">
@@ -147,9 +179,6 @@
     const PS = settings.portal || {};
     document.getElementById('portal_name').value = PS.name || 'DC319';
 
-    const as = settings.admin_security || {};
-    document.getElementById('admin_allowed_ips').value = (as.allowed_ips || []).join('\n');
-
     const L = settings.ldap || {};
     document.getElementById('ldap_server').value = L.server || '';
     document.getElementById('ldap_mode').value = L.mode || 'plain';
@@ -159,6 +188,7 @@
     document.getElementById('ldap_bind_password').value = '';
     document.getElementById('ldap_users_dn').value = L.users_dn || '';
     document.getElementById('ldap_domain').value = L.domain || '';
+    document.getElementById('ldap_user_filter').value = L.user_filter || '';
 
     const S = settings.security || {};
     document.getElementById('sec_login_attempts').value = S.login_attempts_per_minute != null ? S.login_attempts_per_minute : '';
@@ -168,9 +198,20 @@
     const P = settings.proxy || {};
     document.getElementById('proxy_public_host').value = P.public_host || '';
     document.getElementById('proxy_listen_port').value = P.listen_port != null ? P.listen_port : '';
+
+    const D = settings.dns || {};
+    document.getElementById('dns_servers').value = (D.servers || []).join('\n');
+    document.getElementById('dns_timeout').value = D.timeout != null ? D.timeout : '';
+    document.getElementById('dns_cache_ttl').value = D.cache_ttl != null ? D.cache_ttl : '';
+
+    const T = settings.redis_ttl || {};
+    document.getElementById('ttl_web_session').value = T.web_session_ttl != null ? T.web_session_ttl : '';
+    document.getElementById('ttl_web_idle').value = T.web_idle_ttl != null ? T.web_idle_ttl : '';
+    document.getElementById('ttl_rdp_token').value = T.rdp_token_ttl != null ? T.rdp_token_ttl : '';
+
   }
 
-  function parseIpList(raw) {
+  function parseDnsList(raw) {
     return raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
   }
 
@@ -213,10 +254,22 @@
             bind_dn: document.getElementById('ldap_bind_dn').value.trim() || undefined,
             users_dn: document.getElementById('ldap_users_dn').value.trim() || undefined,
             domain: document.getElementById('ldap_domain').value.trim() || undefined,
+            user_filter: document.getElementById('ldap_user_filter').value.trim(),
           },
         };
         const bp = document.getElementById('ldap_bind_password').value;
         if (bp) payloads.ldap.bind_password = bp;
+      }
+      if (key === 'dns') {
+        payloads = {
+          dns: {
+            servers: parseDnsList(document.getElementById('dns_servers').value),
+            timeout: document.getElementById('dns_timeout').value
+              ? Number(document.getElementById('dns_timeout').value) : undefined,
+            cache_ttl: document.getElementById('dns_cache_ttl').value
+              ? Number(document.getElementById('dns_cache_ttl').value) : undefined,
+          },
+        };
       }
       if (key === 'security') {
         payloads = {
@@ -227,7 +280,18 @@
               ? Number(document.getElementById('sec_login_lock').value) : undefined,
             token_fingerprint_enforce: document.getElementById('sec_token_fp').checked,
           },
-          admin_security: { allowed_ips: parseIpList(document.getElementById('admin_allowed_ips').value) },
+        };
+      }
+      if (key === 'sessions') {
+        payloads = {
+          redis_ttl: {
+            web_session_ttl: document.getElementById('ttl_web_session').value
+              ? Number(document.getElementById('ttl_web_session').value) : undefined,
+            web_idle_ttl: document.getElementById('ttl_web_idle').value
+              ? Number(document.getElementById('ttl_web_idle').value) : undefined,
+            rdp_token_ttl: document.getElementById('ttl_rdp_token').value
+              ? Number(document.getElementById('ttl_rdp_token').value) : undefined,
+          },
         };
       }
       try {

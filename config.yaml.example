@@ -1,35 +1,30 @@
+# Minimal bootstrap config. All other settings (LDAP, DNS, security,
+# session TTLs, proxy host/port, relay options) are managed through
+# the admin panel → Settings page and stored in the database.
+
 instance:
   id: "node-1"
-  cluster_name: "rdpproxy-prod"
   lan_ip: "10.120.0.13"
-
-ldap:
-  server: "YOUR_LDAP_IP"
-  mode: "plain"
-  port: 389
-  tls_verify: false
-  bind_dn: "CN=serviceuser,OU=...,DC=example,DC=com"
-  bind_password: "YOUR_BIND_PASSWORD"
-  users_dn: "OU=Users,DC=example,DC=com"
-  domain: "example.com"
 
 database:
   url: "postgresql+asyncpg://rdpproxy:CHANGE_ME@postgres:5432/rdpproxy_v2"
   pool_size: 20
   max_overflow: 10
 
-dns:
-  servers:
-    - "YOUR_INTERNAL_DNS_IP"
-  timeout: 3
-  cache_ttl: 300
+redis:
+  host: "redis"
+  port: 6379
+  password: ""
+  db: 0
+
+security:
+  encryption_key: "GENERATE_WITH_openssl_rand_hex_32"
 
 proxy:
-  public_host: "rdp.example.com"
-  listen_port: 8443
   cert_path: "/etc/letsencrypt/live/rdp.example.com/fullchain.pem"
   key_path: "/etc/letsencrypt/live/rdp.example.com/privkey.pem"
 
+# Bind addresses — change only for non-standard setups
 portal:
   host: "0.0.0.0"
   port: 8001
@@ -37,27 +32,27 @@ portal:
 admin:
   host: "0.0.0.0"
   port: 9090
-  allowed_networks:
-    - "10.120.0.0/24"
-    - "127.0.0.0/8"
 
 rdp_relay:
   host: "0.0.0.0"
   port: 8002
-  proxy_protocol: true
 
-redis:
-  host: "redis"
-  port: 6379
-  password: ""
-  db: 0
-  web_session_ttl: 28800
-  web_idle_ttl: 1800
-  rdp_token_ttl: 300
-
-security:
-  encryption_key: "GENERATE_WITH_openssl_rand_hex_32"
-  token_fingerprint_enforce: true
-  login_attempts_per_minute: 8
-  login_lock_seconds: 120
-  admin_groups: []
+# ── Optional: LDAP / DNS / etc. can still be set here for initial seed ──
+# If present, values are migrated to the database on first startup and
+# then managed exclusively through the admin panel.
+#
+# ldap:
+#   server: "dc01.example.com"
+#   mode: "plain"
+#   port: 389
+#   tls_verify: false
+#   bind_dn: "CN=serviceuser,OU=...,DC=example,DC=com"
+#   bind_password: "YOUR_BIND_PASSWORD"
+#   users_dn: "OU=Users,DC=example,DC=com"
+#   domain: "example.com"
+#
+# dns:
+#   servers:
+#     - "10.100.0.2"
+#   timeout: 3
+#   cache_ttl: 300

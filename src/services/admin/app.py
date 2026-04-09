@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -11,13 +12,13 @@ from fastapi import FastAPI
 from fastapi.templating import Jinja2Templates
 
 from config.loader import AppConfig
+from config.settings_manager import SettingsManager
 from db.engine import create_engine, create_sessionmaker
 from identity.ldap_auth import LDAPAuthenticator
 from redis_store.client import create_redis_client
 from redis_store.sessions import AdminWebSessionData, SessionStore
 from services.admin.dependencies import ADMIN_COOKIE_NAME, browser_fingerprint, require_admin
 
-from db.models.settings import PortalSetting
 from services.admin.middleware.audit import AuditMiddleware
 from services.admin.routes import (
     ad_groups,
@@ -50,32 +51,68 @@ def create_app(config: AppConfig) -> FastAPI:
     redis_client = create_redis_client(config.redis)
     app.state.redis_client = redis_client
     app.state.session_store = SessionStore(redis_client, config.redis, config.security)
-    app.state.ldap_auth = LDAPAuthenticator(config.ldap)
 
-    app.state.portal_name_cache = None
+    ldap_cfg = config.ldap
+    app.state.ldap_auth = LDAPAuthenticator(ldap_cfg) if ldap_cfg else None
+
+    settings_mgr = SettingsManager(app.state.db_sessionmaker, config, config.security.encryption_key)
+    app.state.settings_manager = settings_mgr
+
+    app.state.portal_name_cache: str | None = None
 
     async def _load_portal_name() -> str:
         cached = app.state.portal_name_cache
         if cached is not None:
             return cached
-        try:
-            async with app.state.db_sessionmaker() as dbs:
-                row = await dbs.get(PortalSetting, "portal")
-                if row and isinstance(row.value, dict):
-                    name = row.value.get("name") or "DC319"
-                else:
-                    name = "DC319"
-        except Exception:
-            name = "DC319"
-        app.state.portal_name_cache = name
-        return name
+        portal = await settings_mgr.get("portal")
+        name = portal.get("name", "DC319") if portal else "DC319"
+        app.state.portal_name_cache = name or "DC319"
+        return app.state.portal_name_cache
 
     app.state.load_portal_name = _load_portal_name
 
+    async def _on_ldap_change(_data: dict[str, Any]) -> None:
+        ldap = settings_mgr.ldap
+        if ldap:
+            app.state.ldap_auth = LDAPAuthenticator(ldap)
+            logger.info("LDAP authenticator reloaded from DB settings")
+        else:
+            app.state.ldap_auth = None
+
+    async def _on_redis_ttl_change(data: dict[str, Any]) -> None:
+        store: SessionStore = app.state.session_store
+        store.web_ttl = data.get("web_session_ttl", store.web_ttl)
+        store.rdp_token_ttl = data.get("rdp_token_ttl", store.rdp_token_ttl)
+        store.web_idle_ttl = data.get("web_idle_ttl", store.web_idle_ttl)
+        logger.info("Session TTLs updated from DB settings")
+
+    async def _on_portal_change(_data: dict[str, Any]) -> None:
+        app.state.portal_name_cache = None
+
+    settings_mgr.on_change("ldap", _on_ldap_change)
+    settings_mgr.on_change("redis_ttl", _on_redis_ttl_change)
+    settings_mgr.on_change("portal", _on_portal_change)
+
     async def _reapply_portal_settings() -> None:
+        await settings_mgr.load()
+        await _on_ldap_change({})
+        await _on_redis_ttl_change(settings_mgr.redis_ttl)
         app.state.portal_name_cache = None
 
     app.state.reapply_portal_settings = _reapply_portal_settings
+
+    @app.on_event("startup")
+    async def _load_settings() -> None:
+        await settings_mgr.load()
+        ldap = settings_mgr.ldap
+        if ldap:
+            app.state.ldap_auth = LDAPAuthenticator(ldap)
+        ttl = settings_mgr.redis_ttl
+        store: SessionStore = app.state.session_store
+        store.web_ttl = ttl.get("web_session_ttl", store.web_ttl)
+        store.rdp_token_ttl = ttl.get("rdp_token_ttl", store.rdp_token_ttl)
+        store.web_idle_ttl = ttl.get("web_idle_ttl", store.web_idle_ttl)
+        logger.info("Admin service settings loaded from DB")
 
     app.add_middleware(AuditMiddleware)
 

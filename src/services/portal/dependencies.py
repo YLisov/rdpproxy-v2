@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from fastapi import HTTPException, Request
-import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from config.loader import AppConfig
-from db.models.settings import PortalSetting
+from config.settings_manager import SettingsManager
 from identity.ldap_auth import LDAPAuthenticator
 from redis_store.sessions import SessionStore, WebSessionData
 
@@ -20,6 +19,13 @@ def get_config(request: Request) -> AppConfig:
     if cfg is None:
         raise HTTPException(status_code=500, detail="Config not loaded")
     return cfg
+
+
+def get_settings_manager(request: Request) -> SettingsManager:
+    mgr: SettingsManager | None = getattr(request.app.state, "settings_manager", None)
+    if mgr is None:
+        raise HTTPException(status_code=500, detail="Settings manager not initialized")
+    return mgr
 
 
 def get_session_store(request: Request) -> SessionStore:
@@ -39,8 +45,12 @@ def get_db_sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:
 def get_ldap(request: Request) -> LDAPAuthenticator:
     ldap: LDAPAuthenticator | None = getattr(request.app.state, "ldap_auth", None)
     if ldap is None:
-        raise HTTPException(status_code=500, detail="LDAP not initialized")
+        raise HTTPException(status_code=503, detail="LDAP not configured")
     return ldap
+
+
+def is_ldap_configured(request: Request) -> bool:
+    return getattr(request.app.state, "ldap_auth", None) is not None
 
 
 def get_client_ip(request: Request) -> str:
@@ -83,15 +93,10 @@ def require_session(request: Request) -> WebSessionData:
 
 
 async def get_portal_name(request: Request) -> str:
-    """Resolve portal display name from DB settings with safe default."""
-    default_name = "DC319"
-    factory = get_db_sessionmaker(request)
-    try:
-        async with factory() as dbs:
-            row = await dbs.scalar(sa.select(PortalSetting).where(PortalSetting.key == "portal"))
-    except Exception:
-        return default_name
-    if row is None or not isinstance(row.value, dict):
-        return default_name
-    name = str(row.value.get("name", "")).strip()
-    return name or default_name
+    """Resolve portal display name from SettingsManager."""
+    mgr: SettingsManager | None = getattr(request.app.state, "settings_manager", None)
+    if mgr is None:
+        return "DC319"
+    portal = await mgr.get("portal")
+    name = portal.get("name", "DC319") if portal else "DC319"
+    return name or "DC319"
