@@ -1385,3 +1385,18 @@ docker compose up -d --build rdp-relay
 **Изменённые файлы**: `src/services/admin/templates/admin_settings.html`
 
 **Результат**: Все три параметра (max_connections, idle_timeout, max_session_duration) теперь настраиваются из админки с горячей перезагрузкой через Redis pub/sub. Дефолты: 500 подключений, 1 час idle, без ограничения по длительности.
+
+---
+## Итерация #24
+**Дата**: 2026-04-09
+**Запрос**: Скрипт-установщик для развёртывания RDPProxy на чистом сервере
+
+### Действие 24.1
+**Описание**: Создан `deploy/install.sh` — двуязычный (EN/RU) bash-скрипт автоматизированной установки. Шаги: выбор языка, проверка root/apt, apt update+upgrade, установка Docker через get.docker.com, клон репо (или использование текущей папки), интерактивный диалог (домен, email LE, node-id, DB password, Redis password), генерация encryption_key, автодетект LAN IP, запись .env и config.yaml из шаблонов, выпуск сертификата (LE или self-signed), sysctl-тюнинг (BBR + TCP буферы), systemd-юнит rdpproxy.service, docker compose build+up, ожидание health, Alembic-миграции, создание admin/admin (must_change_password=true), итоговая сводка.
+**Созданные файлы**: `deploy/install.sh`
+
+### Действие 24.2
+**Описание**: Удалена директория `deploy/nftables/` (содержала `rules.nft`). Firewall-настройка оставлена на усмотрение администратора, скрипт-установщик не управляет правилами брандмауэра.
+**Удалённые файлы**: `deploy/nftables/rules.nft`
+
+**Результат**: Проект получил полноценный установщик для развёртывания с нуля на любом apt-based дистрибутиве Linux. Единственный файл, минимум вопросов при установке, автогенерация секретов.

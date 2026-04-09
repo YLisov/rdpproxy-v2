@@ -172,7 +172,7 @@ RDP Relay ─────────────────────► Tar
 
 - `haproxy/haproxy.cfg`: ingress правила. Секция `resolvers docker` (127.0.0.11) + `resolvers docker init-addr libc,none` на серверах `portal`/`admin`/`rdp-relay` — пересоздание контейнеров не оставляет HAProxy со старым IP (иначе 503). Frontend `ft_mux`: `timeout client 24h` для long-lived RDP; backend `bk_rdp`: `timeout tunnel 24h`, `timeout server 24h`.
 - `haproxy/certs/rdp.pem`: runtime cert bundle (не коммитится).
-- `nftables/rules.nft`: ограничение доступа к `9090`.
+- `install.sh`: двуязычный (EN/RU) скрипт-установщик для развёртывания на чистом apt-based Linux. Выполняет: apt update/upgrade, установку Docker, клон репо, интерактивную настройку (домен, node-id, пароли), генерацию секретов, выпуск сертификата (Let's Encrypt или self-signed), sysctl-тюнинг, создание systemd-юнита, сборку и запуск контейнеров, Alembic-миграции, создание admin-пользователя.
 - `scripts/gen-dev-cert.sh`: dev-сертификат.
 - `scripts/pg-backup.sh`: backup PostgreSQL.
 - `scripts/renew-cert.sh`: сборка LE cert bundle + reload haproxy + restart rdp-relay. Домен определяется из БД (`portal_settings.proxy.public_host`), можно передать аргументом.
