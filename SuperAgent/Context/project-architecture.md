@@ -71,11 +71,11 @@ RDP Relay ─────────────────────► Tar
   - `AdminUser`, `AdminAuditLog`
   - `ClusterNode` (состояние нод кластера)
 - `db/migrations/*`: Alembic environment и миграции.
-- `redis_store/keys.py`: централизованные Redis-ключи, паттерны и TTL для всего приложения.
+- `redis_store/keys.py`: централизованные Redis-ключи, паттерны и TTL для всего приложения. Включает `CONN_TOKEN` — маппинг connection_id→token для удаления токена при admin kill.
 - `redis_store/client.py`: фабрика Redis-клиента.
 - `redis_store/sessions.py`: web/admin/rdp session lifecycle + fingerprint checks. Атомарные WATCH/pipeline для TOCTOU-безопасности. `AdminWebSessionData` содержит `allowed_ips`.
 - `redis_store/encryption.py`: AES-256-GCM helper.
-- `redis_store/active_tracker.py`: трекинг активных сессий (Redis + PostgreSQL).
+- `redis_store/active_tracker.py`: трекинг активных сессий (Redis + PostgreSQL). Метод `finish()` защищён от перезаписи записей со `status="killed"` (WHERE `status != 'killed'`), чтобы admin kill статус не затирался финализацией handler. Метод `reconcile_stale_active_on_startup()` при рестарте очищает все транзиентные Redis-ключи: `rdp:token:*`, `rdp:conn-token:*`, `rdp:kill:*`, `rdp:web:*`, `rdp:admin:web:*`, `rdp:active:{instance}:*`.
 - `identity/ldap_auth.py`: LDAP/AD auth, поиск/резолвинг групп, password-change для LDAPS/STARTTLS. Поддерживает `user_filter` — дополнительный LDAP-фильтр при поиске пользователя (фильтрация по группе, OID `1.2.840.113556.1.4.1941` для вложенных подгрупп).
 - `rdp/*`: низкоуровневые RDP блоки (TPKT, X.224, MCS patch, CredSSP, RDP file generation).
 - `proxy_protocol/parser.py`: parser PP v1/v2 для реального IP.
@@ -129,7 +129,7 @@ RDP Relay ─────────────────────► Tar
 - `app.py`: app factory + HTML endpoints. Интегрирован `SettingsManager` с хуками горячей перезагрузки для LDAP, Redis TTL и Portal name. LDAP authenticator создается из DB-настроек при старте.
 - `routes/auth.py`: admin login/logout/change password.
 - `routes/servers.py`, `templates.py`: CRUD серверов и шаблонов.
-- `routes/sessions.py`: активные/исторические сессии, kill. Модель `QualityDetail` (rtt_ms, rtt_var_ms, jitter_ms, retransmits, total_retrans, lost, cwnd, rating) и поле `quality_detail` в `ActiveSessionOut` — данные парсятся из Redis для эндпоинта `GET /api/admin/sessions/active`.
+- `routes/sessions.py`: активные/исторические сессии, kill. Модель `QualityDetail` (rtt_ms, rtt_var_ms, jitter_ms, retransmits, total_retrans, lost, cwnd, rating) и поле `quality_detail` в `ActiveSessionOut` — данные парсятся из Redis для эндпоинта `GET /api/admin/sessions/active`. При admin kill (`kill_session`, `kill_all_sessions`) помимо установки kill-флага также удаляется RDP-токен из Redis через маппинг `CONN_TOKEN`, чтобы клиент не мог авто-переподключиться.
 - `routes/admin_users.py`: управление локальными админ-аккаунтами.
 - `routes/ad_groups.py`: резолвинг/обновление AD-групп.
 - `routes/settings.py`: системные настройки.
@@ -140,7 +140,7 @@ RDP Relay ─────────────────────► Tar
 
 #### RDP Relay (`services/rdp_relay`)
 - `main.py`: TCP listener и graceful shutdown. Интегрирован `SettingsManager` с фоновой задачей `_settings_listener` (Redis pub/sub). DNS resolver и настройки handler обновляются на лету.
-- `handler.py`: полный lifecycle одной RDP-сессии. Динамические параметры (token_fingerprint_enforce, ldap.domain) читаются из `SettingsManager`. Proxy Protocol v2 всегда включён (хардкод). Методы `update_dns()` и `update_settings()` для горячей подмены.
+- `handler.py`: полный lifecycle одной RDP-сессии. Динамические параметры (token_fingerprint_enforce, delete_token_on_disconnect, ldap.domain) читаются из `SettingsManager`. Proxy Protocol v2 всегда включён (хардкод). Методы `update_dns()` и `update_settings()` для горячей подмены. При старте сессии сохраняет маппинг connection_id→token в Redis (`CONN_TOKEN`). После завершения реле определяет реальную причину (`admin_kill` / `idle_timeout` / `normal`) по анализу `result.legs` и наличию kill-ключа. Опционально удаляет токен при завершении если включена настройка `delete_token_on_disconnect`.
   - optional PPv2 read
   - token extraction + `extract_requested_protocols` из X.224 CR клиента
   - X.224 confirm
@@ -243,7 +243,7 @@ services.cert_manager
 ### 5.3 Admin monitoring
 1. Metrics сервис публикует heartbeat и метрики (CPU, RAM, SWAP, сеть) в Redis ключи `rdp:metrics:{instance_id}:latest` и `rdp:metrics:{instance_id}:series`.
 2. Admin читает cluster/status данные из PostgreSQL/Redis. `stats.py` поддерживает параметр `period` (1h/6h/24h) для серии точек.
-3. Admin может завершать сессии через kill-ключ в Redis (одиночные и массовые через `/api/admin/sessions/kill-all`).
+3. Admin может завершать сессии через kill-ключ в Redis (одиночные и массовые через `/api/admin/sessions/kill-all`). При admin kill также удаляется RDP-токен, чтобы предотвратить авто-реконнект клиента. В истории сессий admin kill корректно отображается как `status=killed`, `disconnect_reason=admin_kill`.
 4. Дашборд отображает виджеты CPU (с load avg), RAM, SWAP, сеть, активные сессии + графики с переключением периода.
 
 ## 6) Реализованные возможности

@@ -162,6 +162,7 @@ class SettingsManager:
             "login_attempts_per_minute": self._base.security.login_attempts_per_minute,
             "login_lock_seconds": self._base.security.login_lock_seconds,
             "admin_groups": list(self._base.security.admin_groups),
+            "delete_token_on_disconnect": self._base.security.delete_token_on_disconnect,
         }
         raw = self._cache.get("security")
         if raw is None:

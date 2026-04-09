@@ -122,6 +122,7 @@
       <input id="ttl_rdp_token" type="number" min="10" placeholder="300">
       <span class="hint" style="margin:0">По умолчанию 300 = 5 минут</span>
     </label>
+    <label class="inline-check"><input type="checkbox" id="sec_delete_token"> Удалять токен при завершении сессии (запрет авто-переподключения)</label>
     <div class="actions"><button type="button" class="save" data-save="sessions">Сохранить</button></div>
   </div>
 
@@ -212,6 +213,7 @@
     document.getElementById('ttl_web_session').value = T.web_session_ttl != null ? T.web_session_ttl : '';
     document.getElementById('ttl_web_idle').value = T.web_idle_ttl != null ? T.web_idle_ttl : '';
     document.getElementById('ttl_rdp_token').value = T.rdp_token_ttl != null ? T.rdp_token_ttl : '';
+    document.getElementById('sec_delete_token').checked = !!S.delete_token_on_disconnect;
 
   }
 
@@ -306,6 +308,9 @@
               ? Number(document.getElementById('ttl_web_idle').value) : undefined,
             rdp_token_ttl: document.getElementById('ttl_rdp_token').value
               ? Number(document.getElementById('ttl_rdp_token').value) : undefined,
+          },
+          security: {
+            delete_token_on_disconnect: document.getElementById('sec_delete_token').checked,
           },
         };
       }

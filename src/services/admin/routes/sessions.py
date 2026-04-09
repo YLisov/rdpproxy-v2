@@ -311,6 +311,11 @@ async def kill_all_sessions(request: Request, _: AdminWebSessionData = Depends(r
             connection_id = parts[3]
             rc.setex(keys.KILL_SESSION.format(connection_id=connection_id), keys.KILL_TTL, "1")
             rc.delete(k)
+            token_key = keys.CONN_TOKEN.format(connection_id=connection_id)
+            raw_token = rc.get(token_key)
+            if raw_token:
+                rc.delete(keys.TOKEN.format(token=raw_token.decode() if isinstance(raw_token, bytes) else raw_token))
+                rc.delete(token_key)
             await session.execute(
                 sa.update(ConnectionHistory)
                 .where(ConnectionHistory.id == uuid.UUID(connection_id), ConnectionHistory.status == "active")
@@ -334,6 +339,12 @@ async def kill_session(request: Request, connection_id: str, _: AdminWebSessionD
     instance_id = str(get_config(request).instance.id)
     rc.setex(keys.KILL_SESSION.format(connection_id=connection_id), keys.KILL_TTL, "1")
     rc.delete(keys.ACTIVE_SESSION.format(instance_id=instance_id, connection_id=connection_id))
+
+    token_key = keys.CONN_TOKEN.format(connection_id=connection_id)
+    raw_token = rc.get(token_key)
+    if raw_token:
+        rc.delete(keys.TOKEN.format(token=raw_token.decode() if isinstance(raw_token, bytes) else raw_token))
+        rc.delete(token_key)
 
     session = await get_db_session(request)
     try:

@@ -113,6 +113,11 @@ class RdpConnectionHandler:
                 client_ip=client_ip,
             )
             tracked_cid = tracked.connection_id
+            self._sessions.client.setex(
+                keys.CONN_TOKEN.format(connection_id=tracked_cid),
+                self._cfg.redis.rdp_token_ttl,
+                token,
+            )
             await self._tracker.event(tracked_cid, "token_resolved", {
                 "target": f"{session.target_host}:{session.target_port}",
             })
@@ -199,14 +204,33 @@ class RdpConnectionHandler:
                     for l in result.legs
                 ],
             })
+
+            was_killed = any(leg.reason == "killed" for leg in result.legs)
+            if was_killed:
+                admin_kill = bool(self._sessions.client.get(
+                    keys.KILL_SESSION.format(connection_id=tracked_cid)
+                ))
+                if admin_kill:
+                    fin_status, fin_reason = "killed", "admin_kill"
+                else:
+                    fin_status, fin_reason = "closed", "idle_timeout"
+            else:
+                fin_status, fin_reason = "closed", "normal"
+
             await self._tracker.finish(
                 connection_id=tracked_cid,
-                status="closed",
-                disconnect_reason="normal",
+                status=fin_status,
+                disconnect_reason=fin_reason,
                 bytes_to_client=result.bytes_to_client,
                 bytes_to_backend=result.bytes_to_backend,
             )
-            logger.info("RDP session completed normally (client=%s cid=%s)", client_ip, tracked_cid)
+
+            sec = self._settings.security_params if self._settings else {}
+            if sec.get("delete_token_on_disconnect", False):
+                self._sessions.delete_session(token)
+            self._sessions.client.delete(keys.CONN_TOKEN.format(connection_id=tracked_cid))
+
+            logger.info("RDP session completed (client=%s cid=%s status=%s reason=%s)", client_ip, tracked_cid, fin_status, fin_reason)
 
         except Exception:
             logger.exception("RDP handling failed (client=%s)", client_ip)
@@ -220,6 +244,7 @@ class RdpConnectionHandler:
                         bytes_to_client=0,
                         bytes_to_backend=0,
                     )
+                    self._sessions.client.delete(keys.CONN_TOKEN.format(connection_id=tracked_cid))
                 except Exception:
                     logger.exception("Failed to finalize tracked connection %s", tracked_cid)
             abort_writer(client_writer)

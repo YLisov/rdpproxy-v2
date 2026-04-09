@@ -78,22 +78,32 @@ class ConnectionTracker:
         bytes_to_client: int, bytes_to_backend: int,
     ) -> None:
         if self._db_factory is not None:
+            now = datetime.now(timezone.utc)
+            cid = uuid.UUID(connection_id)
             async with self._db_factory() as dbs:
-                await dbs.execute(
+                result = await dbs.execute(
                     sa.update(ConnectionHistory)
-                    .where(ConnectionHistory.id == uuid.UUID(connection_id))
+                    .where(ConnectionHistory.id == cid, ConnectionHistory.status != "killed")
                     .values(
-                        ended_at=datetime.now(timezone.utc), status=status,
-                        disconnect_reason=disconnect_reason,
+                        ended_at=now, status=status, disconnect_reason=disconnect_reason,
                         bytes_to_client=int(bytes_to_client), bytes_to_backend=int(bytes_to_backend),
                     )
                 )
+                if result.rowcount == 0:
+                    await dbs.execute(
+                        sa.update(ConnectionHistory)
+                        .where(ConnectionHistory.id == cid, ConnectionHistory.status == "killed")
+                        .values(
+                            ended_at=now,
+                            bytes_to_client=int(bytes_to_client), bytes_to_backend=int(bytes_to_backend),
+                        )
+                    )
                 await dbs.commit()
         if self._redis is not None:
             self._redis.delete(keys.ACTIVE_SESSION.format(instance_id=self._instance_id, connection_id=connection_id))
 
     async def reconcile_stale_active_on_startup(self) -> tuple[int, int]:
-        """Mark leftover active sessions as error after relay restart."""
+        """Mark leftover active sessions as error after relay restart and flush transient Redis keys."""
         db_updated = 0
         redis_deleted = 0
 
@@ -116,12 +126,20 @@ class ConnectionTracker:
                 db_updated = int(result.rowcount or 0)
 
         if self._redis is not None:
-            prefix = keys.ACTIVE_SESSION.format(instance_id=self._instance_id, connection_id="")
+            flush_patterns = [
+                keys.ACTIVE_SESSION.format(instance_id=self._instance_id, connection_id="") + "*",
+                "rdp:token:*",
+                "rdp:conn-token:*",
+                "rdp:kill:*",
+                "rdp:web:*",
+                "rdp:admin:web:*",
+            ]
             try:
-                for key in self._redis.scan_iter(match=f"{prefix}*"):
-                    self._redis.delete(key)
-                    redis_deleted += 1
+                for pattern in flush_patterns:
+                    for key in self._redis.scan_iter(match=pattern):
+                        self._redis.delete(key)
+                        redis_deleted += 1
             except Exception:
-                logger.exception("Failed to cleanup stale redis active sessions")
+                logger.exception("Failed to cleanup stale redis sessions on startup")
 
         return db_updated, redis_deleted

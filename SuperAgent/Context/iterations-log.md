@@ -1286,3 +1286,67 @@ docker compose up -d --build rdp-relay
 **Результат**: Полная цепочка автоматизации: смена `public_host` в админ-панели → admin on_change хук → Redis pub/sub → cert-manager → certbot certonly → пересборка rdp.pem → reload HAProxy + restart rdp-relay.
 **Новые файлы**: `deploy/scripts/change-domain.sh`, `deploy/cert-manager/Dockerfile`, `src/services/cert_manager/__init__.py`, `src/services/cert_manager/main.py`.
 **Изменённые файлы**: `docker-compose.yml`, `src/libs/redis_store/keys.py`, `src/services/admin/app.py`, `src/services/admin/templates/admin_settings.html`.
+
+---
+## Итерация #20
+**Дата**: 2026-04-09
+**Запрос**: При завершении сессии админом через админку — удалять RDP-токен из Redis (чтобы клиент не авто-переподключался) + корректно отображать admin_kill в истории сессий (а не normal).
+
+### Действие 20.1
+**Описание**: Добавлен Redis-ключ `CONN_TOKEN = "rdp:conn-token:{connection_id}"` — маппинг connection_id на token, чтобы по connection_id можно было найти и удалить RDP-токен.
+**Изменённые файлы**: `src/libs/redis_store/keys.py`
+
+### Действие 20.2
+**Описание**: Добавлено поле `delete_token_on_disconnect: bool = False` в `SecurityConfig` — настройка для опционального удаления токена при любом завершении сессии (запрет авто-переподключения).
+**Изменённые файлы**: `src/libs/config/loader.py`
+
+### Действие 20.3
+**Описание**: Добавлен дефолт `delete_token_on_disconnect` в `security_params` свойство `SettingsManager`.
+**Изменённые файлы**: `src/libs/config/settings_manager.py`
+
+### Действие 20.4
+**Описание**: В `active_tracker.py` метод `finish()` защищён от перезаписи записей со `status="killed"` — добавлено условие `ConnectionHistory.status != "killed"` в WHERE. Это предотвращает затирание admin_kill статуса финализацией handler.
+**Изменённые файлы**: `src/libs/redis_store/active_tracker.py`
+
+### Действие 20.5
+**Описание**: В `handler.py` три изменения:
+1. После `tracker.start()` сохраняется маппинг `CONN_TOKEN` (connection_id → token) в Redis с TTL равным `rdp_token_ttl`.
+2. После завершения реле определяется реальная причина: анализ `result.legs` на `reason="killed"`, затем проверка наличия kill-ключа Redis для различения `admin_kill` vs `idle_timeout`. Корректный `status`/`disconnect_reason` передаётся в `tracker.finish()`.
+3. Если настройка `delete_token_on_disconnect` включена — токен удаляется. Маппинг `CONN_TOKEN` очищается при любом завершении (включая exception).
+**Изменённые файлы**: `src/services/rdp_relay/handler.py`
+
+### Действие 20.6
+**Описание**: В admin routes `kill_session` и `kill_all_sessions` добавлено удаление RDP-токена через маппинг `CONN_TOKEN`: по connection_id читается token, удаляется `rdp:token:{token}` и сам маппинг. Это гарантирует, что после admin kill клиент не сможет переподключиться.
+**Изменённые файлы**: `src/services/admin/routes/sessions.py`
+
+### Действие 20.7
+**Описание**: В шаблон `admin_settings.html` добавлен чекбокс «Удалять токен при завершении сессии (запрет авто-переподключения)» на вкладке Безопасность. Добавлена загрузка значения из настроек и сбор при сохранении.
+**Изменённые файлы**: `src/services/admin/templates/admin_settings.html`
+
+### Действие 20.8
+**Описание**: Чекбокс «Удалять токен при завершении сессии» перенесён из вкладки «Безопасность» на вкладку «Сессии» (под полем RDP-токен TTL). Настройка по-прежнему хранится в ключе `security` в БД, но при сохранении вкладки «Сессии» отправляется в payload вместе с `redis_ttl`. Загрузка значения читается из `settings.security`.
+**Изменённые файлы**: `src/services/admin/templates/admin_settings.html`
+
+**Результат**: Admin kill теперь полностью работает: 1) удаляется RDP-токен — клиент не может авто-переподключиться; 2) в истории сессий корректно отображается `status=killed` и `disconnect_reason=admin_kill` (ранее перезаписывалось на `closed`/`normal`); 3) добавлена опциональная настройка для удаления токена при любом завершении сессии.
+
+---
+## Итерация #21
+**Дата**: 2026-04-09
+**Запрос**: При рестарте rdp-relay очищать все транзиентные ключи в Redis (токены, сессии, маппинги).
+
+### Действие 21.1
+**Описание**: Расширен метод `reconcile_stale_active_on_startup()` в `active_tracker.py`. Помимо очистки `rdp:active:*` (как было), теперь при старте удаляются все транзиентные Redis-ключи: `rdp:token:*` (RDP-токены), `rdp:conn-token:*` (маппинги connection→token), `rdp:kill:*` (kill-сигналы), `rdp:web:*` (веб-сессии портала), `rdp:admin:web:*` (админские веб-сессии). Метрики, настройки и кэш не затрагиваются.
+**Изменённые файлы**: `src/libs/redis_store/active_tracker.py`
+
+**Результат**: После рестарта rdp-relay все пользовательские и админские сессии сбрасываются — требуется повторная авторизация. RDP-токены очищаются, исключая «висячие» подключения по старым токенам.
+
+---
+## Итерация #22
+**Дата**: 2026-04-09
+**Запрос**: При admin kill не сохраняется время конца сессии и длительность в истории.
+
+### Действие 22.1
+**Описание**: Исправлен метод `finish()` в `active_tracker.py`. Проблема: защитный WHERE `status != "killed"` полностью блокировал обновление записи, если админ уже поставил `status="killed"` (без `ended_at`). Решение — двухшаговый update: 1) попытка полного обновления для не-killed записей; 2) если запись уже killed (rowcount==0) — обновляются только `ended_at` и байты, без затирания статуса и причины.
+**Изменённые файлы**: `src/libs/redis_store/active_tracker.py`
+
+**Результат**: В истории сессий при admin kill теперь корректно отображаются время окончания, длительность и переданные байты наряду со статусом `killed` / `admin_kill`.

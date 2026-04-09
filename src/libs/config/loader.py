@@ -92,6 +92,7 @@ class SecurityConfig(BaseModel):
     login_attempts_per_minute: int = 8
     login_lock_seconds: int = 120
     admin_groups: list[str] = Field(default_factory=list)
+    delete_token_on_disconnect: bool = False
 
 
 class AppConfig(BaseModel):

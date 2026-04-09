@@ -18,6 +18,9 @@ ACTIVE_SCAN = "rdp:active:*"
 # ── Kill signals ──
 KILL_SESSION = "rdp:kill:{connection_id}"
 
+# ── Connection → token mapping (for admin kill token cleanup) ──
+CONN_TOKEN = "rdp:conn-token:{connection_id}"
+
 # ── Metrics ──
 METRICS_LATEST = "rdp:metrics:{instance_id}:latest"
 METRICS_SERIES = "rdp:metrics:{instance_id}:series"
