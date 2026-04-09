@@ -29,6 +29,9 @@ async def _settings_listener(
     settings_mgr: SettingsManager,
     handler: RdpConnectionHandler,
     session_store: SessionStore,
+    session_monitor_plugin: SessionMonitorPlugin,
+    conn_semaphore: asyncio.Semaphore,
+    conn_limit: list[int],
 ) -> None:
     """Background task: listen for settings changes via Redis pub/sub."""
     try:
@@ -45,6 +48,19 @@ async def _settings_listener(
                 session_store.web_ttl = ttl.get("web_session_ttl", session_store.web_ttl)
                 session_store.rdp_token_ttl = ttl.get("rdp_token_ttl", session_store.rdp_token_ttl)
                 session_store.web_idle_ttl = ttl.get("web_idle_ttl", session_store.web_idle_ttl)
+                rp = settings_mgr.relay_params
+                session_monitor_plugin.update_timeouts(
+                    idle_timeout=rp.get("idle_timeout", session_monitor_plugin._idle_timeout),
+                    max_session_duration=rp.get("max_session_duration", session_monitor_plugin._max_session_duration),
+                )
+                new_max = rp.get("max_connections", conn_limit[0])
+                if new_max != conn_limit[0]:
+                    diff = new_max - conn_limit[0]
+                    conn_limit[0] = new_max
+                    if diff > 0:
+                        for _ in range(diff):
+                            conn_semaphore.release()
+                    logger.info("max_connections updated to %d", new_max)
                 logger.info("RDP Relay reloaded settings after pub/sub notification")
             await asyncio.sleep(0.5)
     except asyncio.CancelledError:
@@ -85,9 +101,14 @@ async def run_server() -> None:
     session_store.rdp_token_ttl = ttl.get("rdp_token_ttl", session_store.rdp_token_ttl)
     session_store.web_idle_ttl = ttl.get("web_idle_ttl", session_store.web_idle_ttl)
 
+    relay = settings_mgr.relay_params
+    session_monitor = SessionMonitorPlugin(
+        idle_timeout=relay.get("idle_timeout", config.rdp_relay.idle_timeout),
+        max_session_duration=relay.get("max_session_duration", config.rdp_relay.max_session_duration),
+    )
     plugins = PluginRegistry([
         McsPatchPlugin(),
-        SessionMonitorPlugin(),
+        session_monitor,
         ConnectionQualityPlugin(redis_client=redis_client, instance_id=config.instance.id),
     ])
 
@@ -100,12 +121,13 @@ async def run_server() -> None:
         settings_manager=settings_mgr,
     )
 
-    max_conn = config.rdp_relay.max_connections
+    max_conn = relay.get("max_connections", config.rdp_relay.max_connections)
     conn_semaphore = asyncio.Semaphore(max_conn)
+    conn_limit = [max_conn]
 
     async def _limited_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         if conn_semaphore.locked():
-            logger.warning("Max connections (%d) reached, rejecting client", max_conn)
+            logger.warning("Max connections (%d) reached, rejecting client", conn_limit[0])
             from services.rdp_relay.tcp_utils import abort_writer
             abort_writer(writer)
             return
@@ -121,7 +143,10 @@ async def run_server() -> None:
     logger.info("RDP Relay listening on %s (max_connections=%d)", addrs, max_conn)
 
     listener_task = asyncio.create_task(
-        _settings_listener(redis_client, settings_mgr, handler, session_store)
+        _settings_listener(
+            redis_client, settings_mgr, handler, session_store,
+            session_monitor, conn_semaphore, conn_limit,
+        )
     )
 
     stop_event = asyncio.Event()

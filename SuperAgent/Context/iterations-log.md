@@ -1350,3 +1350,38 @@ docker compose up -d --build rdp-relay
 **Изменённые файлы**: `src/libs/redis_store/active_tracker.py`
 
 **Результат**: В истории сессий при admin kill теперь корректно отображаются время окончания, длительность и переданные байты наряду со статусом `killed` / `admin_kill`.
+
+---
+## Итерация #23
+**Дата**: 2026-04-09
+**Запрос**: Вынести idle_timeout и max_connections в настройки админки (SettingsManager), добавить абсолютный max_session_duration.
+
+### Действие 23.1
+**Описание**: В `RdpRelayConfig` добавлены поля `idle_timeout: int = 3600` и `max_session_duration: int = 0` (0 = без ограничения).
+**Изменённые файлы**: `src/libs/config/loader.py`
+
+### Действие 23.2
+**Описание**: В `SettingsManager` добавлена секция `relay` в `MANAGED_KEYS`, свойство `relay_params` (max_connections, idle_timeout, max_session_duration), fallback к YAML, экспорт в `get_all_for_ui()`.
+**Изменённые файлы**: `src/libs/config/settings_manager.py`
+
+### Действие 23.3
+**Описание**: В admin routes settings добавлен ключ `relay` в `_MERGE_KEYS` для разрешения сохранения.
+**Изменённые файлы**: `src/services/admin/routes/settings.py`
+
+### Действие 23.4
+**Описание**: Переписан `SessionMonitorPlugin`: добавлен `max_session_duration`, `_started_at`, метод `is_duration_exceeded()`, метод `update_timeouts()` для горячего обновления. `idle_timeout=0` отключает idle check.
+**Изменённые файлы**: `src/services/rdp_relay/plugins/session_monitor.py`
+
+### Действие 23.5
+**Описание**: В `handler.py` в `_kill_requested()` добавлена проверка `is_duration_exceeded()`. В определении причины завершения добавлена ветка `max_duration`.
+**Изменённые файлы**: `src/services/rdp_relay/handler.py`
+
+### Действие 23.6
+**Описание**: В `main.py`: `SessionMonitorPlugin` инициализируется с параметрами из `relay_params`. `max_connections` читается из settings. `_settings_listener` расширен — при pub/sub обновляет `session_monitor.update_timeouts()` и динамически меняет лимит semaphore.
+**Изменённые файлы**: `src/services/rdp_relay/main.py`
+
+### Действие 23.7
+**Описание**: В `admin_settings.html` добавлена вкладка «RDP Relay» с тремя полями: макс. подключений, таймаут бездействия, макс. длительность. JS загрузка из `settings.relay`, сохранение через PUT с ключом `relay`.
+**Изменённые файлы**: `src/services/admin/templates/admin_settings.html`
+
+**Результат**: Все три параметра (max_connections, idle_timeout, max_session_duration) теперь настраиваются из админки с горячей перезагрузкой через Redis pub/sub. Дефолты: 500 подключений, 1 час idle, без ограничения по длительности.

@@ -17,7 +17,7 @@ logger = logging.getLogger("rdpproxy.admin.settings")
 
 _MERGE_KEYS = frozenset({
     "ldap", "security", "proxy",
-    "redis_ttl", "portal", "dns",
+    "redis_ttl", "portal", "dns", "relay",
 })
 
 

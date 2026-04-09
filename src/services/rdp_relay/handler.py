@@ -182,9 +182,13 @@ class RdpConnectionHandler:
             def _kill_requested() -> bool:
                 if bool(self._sessions.client.get(keys.KILL_SESSION.format(connection_id=tracked_cid))):
                     return True
-                if _session_monitor and _session_monitor.is_idle():
-                    logger.info("Session %s terminated due to idle timeout", tracked_cid)
-                    return True
+                if _session_monitor:
+                    if _session_monitor.is_idle():
+                        logger.info("Session %s terminated due to idle timeout", tracked_cid)
+                        return True
+                    if _session_monitor.is_duration_exceeded():
+                        logger.info("Session %s terminated due to max duration exceeded", tracked_cid)
+                        return True
                 return False
 
             result: RelayResult = await relay_bidirectional(
@@ -212,6 +216,8 @@ class RdpConnectionHandler:
                 ))
                 if admin_kill:
                     fin_status, fin_reason = "killed", "admin_kill"
+                elif _session_monitor and _session_monitor.is_duration_exceeded():
+                    fin_status, fin_reason = "closed", "max_duration"
                 else:
                     fin_status, fin_reason = "closed", "idle_timeout"
             else:

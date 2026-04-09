@@ -109,20 +109,37 @@
   </div>
 
   <div id="panel-sessions" class="panel">
-    <p class="hint">Время жизни сессий в Redis. Значения в секундах. <span class="apply-badge hot">Применяется к новым сессиям</span></p>
-    <label>Веб-сессия (max TTL)
+    <p class="hint">Управление сессиями портала и RDP-подключениями. <span class="apply-badge hot">Применяется сразу</span></p>
+
+    <p style="font-weight:700;font-size:14px;margin:16px 0 8px;color:var(--text,#1e293b)">Веб-портал</p>
+    <label>Макс. время авторизации (секунды)
       <input id="ttl_web_session" type="number" min="60" placeholder="28800">
       <span class="hint" style="margin:0">По умолчанию 28800 = 8 часов</span>
     </label>
-    <label>Таймаут бездействия (idle)
+    <label>Таймаут бездействия портала (секунды)
       <input id="ttl_web_idle" type="number" min="60" placeholder="1800">
       <span class="hint" style="margin:0">По умолчанию 1800 = 30 минут</span>
     </label>
-    <label>RDP-токен (время на подключение)
+
+    <p style="font-weight:700;font-size:14px;margin:20px 0 8px;color:var(--text,#1e293b)">RDP-подключения</p>
+    <label>Время жизни токена подключения (секунды)
       <input id="ttl_rdp_token" type="number" min="10" placeholder="300">
-      <span class="hint" style="margin:0">По умолчанию 300 = 5 минут</span>
+      <span class="hint" style="margin:0">По умолчанию 300 = 5 минут. Время на подключение после скачивания .rdp</span>
     </label>
     <label class="inline-check"><input type="checkbox" id="sec_delete_token"> Удалять токен при завершении сессии (запрет авто-переподключения)</label>
+    <label>Макс. одновременных подключений
+      <input id="relay_max_conn" type="number" min="1" placeholder="500">
+      <span class="hint" style="margin:0">По умолчанию 500</span>
+    </label>
+    <label>Таймаут бездействия RDP-сессии (секунды)
+      <input id="relay_idle_timeout" type="number" min="0" placeholder="3600">
+      <span class="hint" style="margin:0">По умолчанию 3600 = 1 час. 0 = без ограничения</span>
+    </label>
+    <label>Макс. длительность RDP-сессии (секунды)
+      <input id="relay_max_duration" type="number" min="0" placeholder="0">
+      <span class="hint" style="margin:0">По умолчанию 0 = без ограничения</span>
+    </label>
+
     <div class="actions"><button type="button" class="save" data-save="sessions">Сохранить</button></div>
   </div>
 
@@ -214,6 +231,11 @@
     document.getElementById('ttl_web_idle').value = T.web_idle_ttl != null ? T.web_idle_ttl : '';
     document.getElementById('ttl_rdp_token').value = T.rdp_token_ttl != null ? T.rdp_token_ttl : '';
     document.getElementById('sec_delete_token').checked = !!S.delete_token_on_disconnect;
+
+    const R = settings.relay || {};
+    document.getElementById('relay_max_conn').value = R.max_connections != null ? R.max_connections : '';
+    document.getElementById('relay_idle_timeout').value = R.idle_timeout != null ? R.idle_timeout : '';
+    document.getElementById('relay_max_duration').value = R.max_session_duration != null ? R.max_session_duration : '';
 
   }
 
@@ -311,6 +333,14 @@
           },
           security: {
             delete_token_on_disconnect: document.getElementById('sec_delete_token').checked,
+          },
+          relay: {
+            max_connections: document.getElementById('relay_max_conn').value
+              ? Number(document.getElementById('relay_max_conn').value) : undefined,
+            idle_timeout: document.getElementById('relay_idle_timeout').value
+              ? Number(document.getElementById('relay_idle_timeout').value) : undefined,
+            max_session_duration: document.getElementById('relay_max_duration').value
+              ? Number(document.getElementById('relay_max_duration').value) : undefined,
           },
         };
       }

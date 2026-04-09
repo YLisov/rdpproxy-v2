@@ -74,6 +74,8 @@ class RdpRelayConfig(BaseModel):
     proxy_protocol: bool = True
     trusted_proxies: list[str] = Field(default_factory=lambda: ["172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16", "127.0.0.0/8"])
     max_connections: int = 500
+    idle_timeout: int = 3600
+    max_session_duration: int = 0
 
 
 class RedisConfig(BaseModel):

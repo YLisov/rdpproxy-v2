@@ -16,7 +16,7 @@ from redis_store.encryption import AESEncryptor
 
 logger = logging.getLogger("rdpproxy.settings")
 
-MANAGED_KEYS = ("ldap", "dns", "proxy", "security", "redis_ttl", "portal")
+MANAGED_KEYS = ("ldap", "dns", "proxy", "security", "redis_ttl", "portal", "relay")
 
 _SECRET_AAD = b"portal_settings:ldap:bind_password"
 
@@ -185,6 +185,21 @@ class SettingsManager:
                 defaults[k] = int(raw[k])
         return defaults
 
+    @property
+    def relay_params(self) -> dict[str, int]:
+        defaults = {
+            "max_connections": self._base.rdp_relay.max_connections,
+            "idle_timeout": self._base.rdp_relay.idle_timeout,
+            "max_session_duration": self._base.rdp_relay.max_session_duration,
+        }
+        raw = self._cache.get("relay")
+        if raw is None:
+            return defaults
+        for k in defaults:
+            if k in raw and isinstance(raw[k], (int, float)):
+                defaults[k] = int(raw[k])
+        return defaults
+
     def get_all_for_ui(self) -> dict[str, Any]:
         """Return all settings for the admin UI, with secrets stripped."""
         out: dict[str, Any] = {}
@@ -197,6 +212,7 @@ class SettingsManager:
         out["proxy"] = self.proxy_params
         out["security"] = self.security_params
         out["redis_ttl"] = self.redis_ttl
+        out["relay"] = self.relay_params
         raw_portal = self._cache.get("portal")
         out["portal"] = raw_portal if raw_portal else {"name": "DC319"}
         return out
@@ -225,6 +241,12 @@ class SettingsManager:
                 "web_session_ttl": self._base.redis.web_session_ttl,
                 "web_idle_ttl": self._base.redis.web_idle_ttl,
                 "rdp_token_ttl": self._base.redis.rdp_token_ttl,
+            }
+        if key == "relay":
+            return {
+                "max_connections": self._base.rdp_relay.max_connections,
+                "idle_timeout": self._base.rdp_relay.idle_timeout,
+                "max_session_duration": self._base.rdp_relay.max_session_duration,
             }
         if key == "portal":
             return {"name": "DC319"}

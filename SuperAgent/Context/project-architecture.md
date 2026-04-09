@@ -62,7 +62,7 @@ RDP Relay ─────────────────────► Tar
   - Шифрование секретов (LDAP bind_password) через `AESEncryptor`
   - Хуки горячей перезагрузки (`on_change()`)
   - Redis pub/sub оповещение других сервисов (`rdp:settings:changed`)
-  - Типизированные свойства: `ldap`, `dns`, `proxy_params`, `security_params`, `redis_ttl`
+  - Типизированные свойства: `ldap`, `dns`, `proxy_params`, `security_params`, `redis_ttl`, `relay_params`
 - `db/engine.py`: async engine/session factory (`create_engine`, `create_sessionmaker`, `build_session_factory`).
 - `db/models/*`: предметные сущности:
   - `RdpServer`, `RdpTemplate`
@@ -123,7 +123,7 @@ RDP Relay ─────────────────────► Tar
 
 #### Admin Settings (`services/admin/routes/settings.py` + `templates/admin_settings.html`)
 - `settings.py` полностью переписан для работы через `SettingsManager`: GET читает из менеджера, PUT сохраняет через менеджер с publish в Redis pub/sub. Добавлен endpoint `POST /ldap-test` для проверки LDAP с несохраненными параметрами.
-- `admin_settings.html` расширен 7 вкладками: Общие, LDAP, DNS (новая), Безопасность, Сессии (новая), RDP Relay (новая), Администраторы. У каждой группы — цветная метка "Применяется сразу" (зеленая) или "Требует перезапуска" (оранжевая).
+- `admin_settings.html` расширен 8 вкладками: Общие, LDAP, DNS, Безопасность, Сессии, RDP Relay (max_connections, idle_timeout, max_session_duration), Администраторы. У каждой группы — цветная метка "Применяется сразу" (зеленая) или "Требует перезапуска" (оранжевая).
 
 #### Admin (`services/admin`)
 - `app.py`: app factory + HTML endpoints. Интегрирован `SettingsManager` с хуками горячей перезагрузки для LDAP, Redis TTL и Portal name. LDAP authenticator создается из DB-настроек при старте.
@@ -154,7 +154,7 @@ RDP Relay ─────────────────────► Tar
 - `plugins/base.py`: контракт плагинов.
 - `plugins/registry.py`: chain dispatcher.
 - `plugins/mcs_patch.py`: MCS patch plugin; считывает `client_requested_protocols` из `ctx.extra` и передаёт в `patch_mcs_server`, чтобы поле `clientRequestedProtocols` в SC_CORE ответе бэкенда соответствовало оригинальному запросу клиента (важно для iPhone / Windows App, которые проверяют точное совпадение).
-- `plugins/session_monitor.py`: session activity/idle monitor.
+- `plugins/session_monitor.py`: session activity/idle monitor + абсолютный лимит длительности. Параметры `idle_timeout` и `max_session_duration` обновляются на лету через `update_timeouts()`. `idle_timeout=0` отключает idle check, `max_session_duration=0` — без ограничения.
 - `plugins/connection_quality.py`: мониторинг качества TCP-соединения через Linux `TCP_INFO`. Содержит ctypes-структуру `_TcpInfo` (31 поле из `struct tcp_info`), датакласс `QualitySnapshot` (rtt_ms, rtt_var_ms, jitter_ms, retransmits, total_retrans, lost, cwnd, rating). Плагин `ConnectionQualityPlugin` запускает фоновую asyncio-задачу при `on_session_start`, которая каждые 5 секунд читает `TCP_INFO` с обоих сокетов (client + backend), считает суммарный RTT и jitter по скользящему окну 20 замеров, определяет рейтинг (excellent/good/fair/poor) и публикует метрики в Redis-ключ `rdp:active:{instance_id}:{connection_id}`.
 - `active_tracker.py` + `rdp_relay/main.py`: при старте relay выполняется `reconcile_stale_active_on_startup()` — закрытие зависших `status=active` сессий (DB+Redis) после рестартов, причина `relay-restart`.
 
