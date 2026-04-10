@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -93,18 +94,57 @@ def create_app(config: AppConfig) -> FastAPI:
         app.state.portal_name_cache = None
 
     app.state._prev_public_host: str | None = None
+    app.state._prev_public_port: int | None = None
+
+    def _update_dotenv_port(port: int) -> bool:
+        """Update PUBLIC_PORT in the .env file (in-place write). Returns True on success."""
+        env_path = os.environ.get("DOTENV_PATH", "/app/.env")
+        lines: list[str] = []
+        found = False
+        try:
+            with open(env_path, "r") as f:
+                for line in f:
+                    if line.startswith("PUBLIC_PORT="):
+                        lines.append(f"PUBLIC_PORT={port}\n")
+                        found = True
+                    else:
+                        lines.append(line)
+        except FileNotFoundError:
+            pass
+        if not found:
+            lines.append(f"PUBLIC_PORT={port}\n")
+        try:
+            with open(env_path, "w") as f:
+                f.writelines(lines)
+            logger.info("Updated %s: PUBLIC_PORT=%d", env_path, port)
+            return True
+        except OSError:
+            logger.warning("Failed to write PUBLIC_PORT to %s", env_path, exc_info=True)
+            return False
 
     async def _on_proxy_change(data: dict[str, Any]) -> None:
         new_host = (data.get("public_host") or "").strip()
         prev = app.state._prev_public_host
         app.state._prev_public_host = new_host
-        if not new_host or not prev or new_host == prev:
-            return
-        logger.info("public_host changed: %s -> %s, requesting certificate", prev, new_host)
-        try:
-            redis_client.publish(keys.CERT_RENEW_CHANNEL, new_host)
-        except Exception:
-            logger.exception("Failed to publish cert renew signal")
+        if new_host and prev and new_host != prev:
+            logger.info("public_host changed: %s -> %s, requesting certificate", prev, new_host)
+            try:
+                redis_client.publish(keys.CERT_RENEW_CHANNEL, new_host)
+            except Exception:
+                logger.exception("Failed to publish cert renew signal")
+
+        new_port = data.get("public_port") or data.get("listen_port")
+        if new_port is not None:
+            new_port = int(new_port)
+            prev_port = app.state._prev_public_port
+            app.state._prev_public_port = new_port
+            if prev_port is not None and new_port != prev_port:
+                logger.info("public_port changed: %d -> %d, updating .env", prev_port, new_port)
+                if _update_dotenv_port(new_port):
+                    try:
+                        redis_client.publish(keys.HAPROXY_RECREATE_CHANNEL, "1")
+                    except Exception:
+                        logger.exception("Failed to publish HAProxy recreate signal (cert-manager)")
 
     settings_mgr.on_change("ldap", _on_ldap_change)
     settings_mgr.on_change("redis_ttl", _on_redis_ttl_change)
@@ -118,6 +158,9 @@ def create_app(config: AppConfig) -> FastAPI:
         app.state.portal_name_cache = None
         proxy = settings_mgr.proxy_params
         app.state._prev_public_host = (proxy.get("public_host") or "").strip()
+        app.state._prev_public_port = proxy.get("public_port") or proxy.get("listen_port")
+        if app.state._prev_public_port is not None:
+            app.state._prev_public_port = int(app.state._prev_public_port)
 
     app.state.reapply_portal_settings = _reapply_portal_settings
 
@@ -134,7 +177,11 @@ def create_app(config: AppConfig) -> FastAPI:
         store.web_idle_ttl = ttl.get("web_idle_ttl", store.web_idle_ttl)
         proxy = settings_mgr.proxy_params
         app.state._prev_public_host = (proxy.get("public_host") or "").strip()
-        logger.info("Admin service settings loaded from DB (public_host=%s)", app.state._prev_public_host)
+        app.state._prev_public_port = proxy.get("public_port") or proxy.get("listen_port")
+        if app.state._prev_public_port is not None:
+            app.state._prev_public_port = int(app.state._prev_public_port)
+        logger.info("Admin service settings loaded from DB (public_host=%s, public_port=%s)",
+                     app.state._prev_public_host, app.state._prev_public_port)
 
     app.add_middleware(AuditMiddleware)
     app.add_middleware(CsrfMiddleware)

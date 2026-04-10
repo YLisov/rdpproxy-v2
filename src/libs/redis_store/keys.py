@@ -51,6 +51,8 @@ ADMIN_LOCK_USER = "rdp:admin:lock:user:{username}"
 # ── Pub/Sub channels ──
 SETTINGS_CHANGED_CHANNEL = "rdp:settings:changed"
 CERT_RENEW_CHANNEL = "rdp:cert:renew"
+# cert-manager recreates HAProxy after admin updates PUBLIC_PORT in .env (docker compose port mapping).
+HAPROXY_RECREATE_CHANNEL = "rdp:haproxy:recreate"
 
 # ── Common TTLs ──
 KILL_TTL = 60

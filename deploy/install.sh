@@ -185,7 +185,7 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
   info "$MSG_DOCKER_OK ($(docker --version | cut -d' ' -f3 | tr -d ','))"
 else
   info "$MSG_INSTALL_DOCKER"
-  curl -fsSL https://get.docker.com | sh -s -- --quiet < /dev/null
+  curl -fsSL https://get.docker.com | sh < /dev/null 2>&1
   systemctl enable --now docker
   info "Docker $(docker --version | cut -d' ' -f3 | tr -d ',')"
 fi
@@ -251,7 +251,11 @@ step "$MSG_WRITE_ENV"
 cat > "${PROJECT_DIR}/.env" <<EOF
 DB_PASSWORD=${DB_PASSWORD}
 REDIS_PASSWORD=${REDIS_PASSWORD}
+PUBLIC_PORT=443
+LAN_IP=${LAN_IP}
+HOST_PROJECT_DIR=${PROJECT_DIR}
 EOF
+chmod 666 "${PROJECT_DIR}/.env"
 info ".env"
 
 # ═════════════════════════════════════════════════════════════════════
@@ -405,27 +409,32 @@ ExecStop=/usr/bin/docker compose down
 [Install]
 WantedBy=multi-user.target
 EOF
+
+sed "s|/opt/rdpproxy|${PROJECT_DIR}|g" \
+  "${PROJECT_DIR}/deploy/systemd/rdpproxy-port-watcher.path" \
+  > /etc/systemd/system/rdpproxy-port-watcher.path
+
+sed "s|/opt/rdpproxy|${PROJECT_DIR}|g" \
+  "${PROJECT_DIR}/deploy/systemd/rdpproxy-port-watcher.service" \
+  > /etc/systemd/system/rdpproxy-port-watcher.service
+
 systemctl daemon-reload
 systemctl enable rdpproxy.service
+systemctl enable --now rdpproxy-port-watcher.path
 info "rdpproxy.service"
+info "rdpproxy-port-watcher.path"
 
 # ═════════════════════════════════════════════════════════════════════
-#  12. Build and start
+#  12. Build images
 # ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_BUILD"
 docker compose build --quiet < /dev/null
 info "docker compose build"
 
-step "$MSG_START"
-docker compose up -d < /dev/null
-info "docker compose up -d"
-
 # ═════════════════════════════════════════════════════════════════════
-#  13. Wait for healthy services
+#  13. Start databases and run migrations BEFORE app services
 # ═════════════════════════════════════════════════════════════════════
-
-step "$MSG_WAIT_HEALTH"
 
 wait_healthy() {
   local svc="$1" max_wait="${2:-120}" elapsed=0
@@ -442,18 +451,16 @@ wait_healthy() {
   return 1
 }
 
+step "$MSG_START"
+docker compose up -d postgres redis < /dev/null
+info "postgres + redis"
+
+step "$MSG_WAIT_HEALTH"
 wait_healthy postgres 60
 wait_healthy redis 60
-wait_healthy portal 120
-wait_healthy admin 120
-
-# ═════════════════════════════════════════════════════════════════════
-#  14. Database migrations
-# ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_MIGRATE"
-docker compose exec -T portal python -c "
-import os
+docker compose run --rm -T --no-deps portal python -c "
 from alembic.config import Config
 from alembic import command
 cfg = Config('alembic.ini')
@@ -461,6 +468,18 @@ cfg.set_main_option('sqlalchemy.url', 'postgresql+asyncpg://rdpproxy:${DB_PASSWO
 command.upgrade(cfg, 'head')
 "
 info "Alembic → head"
+
+# ═════════════════════════════════════════════════════════════════════
+#  14. Start all services
+# ═════════════════════════════════════════════════════════════════════
+
+step "$MSG_START"
+docker compose up -d < /dev/null
+info "docker compose up -d"
+
+step "$MSG_WAIT_HEALTH"
+wait_healthy portal 120
+wait_healthy admin 120
 
 # ═════════════════════════════════════════════════════════════════════
 #  15. Create admin user
@@ -505,7 +524,7 @@ printf "  ${BOLD}%s${NC}\n" "$MSG_ADMIN_URL"
 printf "  → ${CYAN}http://%s:9090/admin/login${NC}\n\n" "$LAN_IP"
 
 printf "  ${BOLD}%s${NC}\n" "$MSG_PORTAL_URL"
-printf "  → ${CYAN}https://%s:8443${NC}\n\n" "$PORTAL_HOST"
+printf "  → ${CYAN}https://%s${NC}\n\n" "$PORTAL_HOST"
 
 printf "  %s\n" "$MSG_CREDS"
 printf "  %s\n\n" "$MSG_CHANGE_PASS"

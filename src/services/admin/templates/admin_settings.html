@@ -55,12 +55,13 @@
     <label>Наименование портала
       <input id="portal_name" type="text" maxlength="128" placeholder="DC319">
     </label>
-    <p class="hint">Публичный адрес и порт, которые подставляются в RDP-файл при скачивании. <span class="apply-badge hot">Адрес — сразу</span> <span class="apply-badge restart">Порт — перезапуск</span></p>
+    <p class="hint">Публичный адрес и порт, которые подставляются в RDP-файл при скачивании. <span class="apply-badge hot">Применяется сразу</span></p>
     <label>Публичный адрес (host) <input id="proxy_public_host" type="text" placeholder="rdp.example.com"></label>
     <p class="hint cert-warn" id="certWarn" style="display:none;color:#92400e;background:#fef3c7;padding:8px 12px;border-radius:6px;margin-top:-8px">
       При смене домена будет автоматически выпущен новый SSL-сертификат Let's Encrypt. Убедитесь, что DNS для нового домена уже указывает на этот сервер (порт 80 доступен).
     </p>
-    <label>Порт прослушивания <input id="proxy_listen_port" type="number" min="1" max="65535" placeholder="3389"></label>
+    <label>Публичный порт <input id="proxy_public_port" type="number" min="1" max="65535" placeholder="443"></label>
+    <p class="hint" style="margin-top:-8px">Порт, на который подключаются клиенты извне. При смене в <code>.env</code> обновляется <code>PUBLIC_PORT</code>, затем контейнер HAProxy пересоздаётся (через cert-manager и Docker; при установке через install.sh дополнительно срабатывает systemd path unit). Задержка несколько секунд.</p>
     <div class="actions"><button type="button" class="save" data-save="general">Сохранить</button></div>
   </div>
 
@@ -218,7 +219,7 @@
 
     const P = settings.proxy || {};
     document.getElementById('proxy_public_host').value = P.public_host || '';
-    document.getElementById('proxy_listen_port').value = P.listen_port != null ? P.listen_port : '';
+    document.getElementById('proxy_public_port').value = P.public_port != null ? P.public_port : (P.listen_port != null ? P.listen_port : '');
     _savedPublicHost = P.public_host || '';
 
     const D = settings.dns || {};
@@ -278,8 +279,8 @@
           portal: { name: document.getElementById('portal_name').value.trim() || 'DC319' },
           proxy: {
             public_host: document.getElementById('proxy_public_host').value.trim() || undefined,
-            listen_port: document.getElementById('proxy_listen_port').value
-              ? Number(document.getElementById('proxy_listen_port').value) : undefined,
+            public_port: document.getElementById('proxy_public_port').value
+              ? Number(document.getElementById('proxy_public_port').value) : undefined,
           },
         };
       }
@@ -350,9 +351,6 @@
           setStatus('Сохранено. Запрошен выпуск SSL-сертификата для нового домена — это может занять до минуты.', 'ok');
         } else {
           setStatus('Сохранено', 'ok');
-        }
-        if (key === 'general' && document.getElementById('proxy_listen_port').value) {
-          showRestartBanner();
         }
         certWarn.style.display = 'none';
         await loadSettings();

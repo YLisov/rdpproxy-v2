@@ -43,7 +43,7 @@ services:
   haproxy:
     image: haproxy:2.9-alpine
     ports:
-      - "8443:8443"
+      - "${PUBLIC_PORT:-443}:443"
       - "${LAN_IP:-0.0.0.0}:9090:9090"
     volumes:
       - ./deploy/haproxy:/usr/local/etc/haproxy:ro
@@ -121,7 +121,7 @@ services:
     command: python -m services.admin.main
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      # Шаблоны и Python лежат в образе; без этого тома нужен `docker compose build admin` после каждой правки UI
+      - ./.env:/app/.env
       - ./src:/app/src:ro
     networks:
       - rdpproxy
@@ -153,11 +153,13 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       - ./deploy:/app/deploy
       - ./docker-compose.yml:/app/docker-compose.yml:ro
+      - ./.env:/app/.env
       - /etc/letsencrypt:/etc/letsencrypt
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       COMPOSE_FILE: /app/docker-compose.yml
       COMPOSE_PROJECT: rdpproxy
+      HOST_PROJECT_DIR: ${HOST_PROJECT_DIR:-/opt/rdpproxy}
       CERT_DEST: /app/deploy/haproxy/certs/rdp.pem
     networks:
       - rdpproxy

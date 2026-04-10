@@ -55,6 +55,11 @@ class SettingsManager:
                 for r in rows.scalars().all():
                     if isinstance(r.value, dict):
                         fresh[r.key] = dict(r.value)
+                pxy = fresh.get("proxy")
+                if isinstance(pxy, dict) and "public_port" in pxy and "listen_port" in pxy:
+                    pxy = dict(pxy)
+                    pxy.pop("listen_port", None)
+                    fresh["proxy"] = pxy
                 self._cache = fresh
                 self._loaded_at = time.monotonic()
 
@@ -85,19 +90,30 @@ class SettingsManager:
         async with self._db() as session:
             row = await session.get(PortalSetting, key)
             if row is None:
-                session.add(PortalSetting(key=key, value=store_value))
+                to_store = dict(store_value)
+                if key == "proxy" and "public_port" in to_store:
+                    to_store.pop("listen_port", None)
+                session.add(PortalSetting(key=key, value=to_store))
             else:
                 if isinstance(row.value, dict):
                     merged = {**dict(row.value), **store_value}
+                    if key == "proxy" and "public_port" in store_value:
+                        merged.pop("listen_port", None)
                 else:
                     merged = store_value
                 row.value = merged
             await session.commit()
 
         if key in self._cache and isinstance(self._cache[key], dict):
-            self._cache[key] = {**self._cache[key], **store_value}
+            merged_cache = {**self._cache[key], **store_value}
+            if key == "proxy" and "public_port" in store_value:
+                merged_cache.pop("listen_port", None)
+            self._cache[key] = merged_cache
         else:
-            self._cache[key] = store_value
+            to_cache = dict(store_value)
+            if key == "proxy" and "public_port" in to_cache:
+                to_cache.pop("listen_port", None)
+            self._cache[key] = to_cache
         self._loaded_at = time.monotonic()
 
         await self._run_hooks(key)
@@ -149,10 +165,10 @@ class SettingsManager:
     def proxy_params(self) -> dict[str, Any]:
         raw = self._cache.get("proxy")
         if raw is None:
-            return {"public_host": self._base.proxy.public_host, "listen_port": self._base.proxy.listen_port}
+            return {"public_host": self._base.proxy.public_host, "public_port": self._base.proxy.public_port}
         return {
             "public_host": raw.get("public_host", self._base.proxy.public_host),
-            "listen_port": raw.get("listen_port", self._base.proxy.listen_port),
+            "public_port": raw.get("public_port", raw.get("listen_port", self._base.proxy.public_port)),
         }
 
     @property
@@ -231,7 +247,7 @@ class SettingsManager:
         if key == "dns":
             return self._base.dns.model_dump()
         if key == "proxy":
-            return {"public_host": self._base.proxy.public_host, "listen_port": self._base.proxy.listen_port}
+            return {"public_host": self._base.proxy.public_host, "public_port": self._base.proxy.public_port}
         if key == "security":
             d = self._base.security.model_dump()
             d.pop("encryption_key", None)

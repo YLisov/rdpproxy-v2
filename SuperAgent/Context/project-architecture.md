@@ -4,7 +4,7 @@
 
 `RDPProxy` построен как набор изолированных сервисов в Docker, объединенных bridge-сетью `rdpproxy`.
 Единственная внешняя точка входа — контейнер `haproxy`, который:
-- принимает весь публичный трафик на `8443`;
+- принимает весь публичный трафик на `443`;
 - делит RDP и HTTPS на L4-уровне;
 - проксирует админ-панель на `9090` только через LAN интерфейс.
 
@@ -15,7 +15,7 @@
 ```
 Internet Client
    │
-   ├── HTTPS / RDP ─────► HAProxy :8443
+   ├── HTTPS / RDP ─────► HAProxy :443
    │                       ├── HTTPS ► Portal :8001 (L7, XFF/X-Real-IP)
    │                       └── RDP   ► RDP Relay :8002 (L4, Proxy Protocol v2)
    │
@@ -64,6 +64,7 @@ RDP Relay ─────────────────────► Tar
   - Хуки горячей перезагрузки (`on_change()`)
   - Redis pub/sub оповещение других сервисов (`rdp:settings:changed`)
   - Типизированные свойства: `ldap`, `dns`, `proxy_params`, `security_params`, `redis_ttl`, `relay_params`
+  - `proxy` в БД: при сохранении с полем `public_port` удаляется устаревший ключ `listen_port` (merge + кеш); при `load()` из снимка строки в кеш не попадает одновременно `listen_port` и `public_port` — остаётся только `public_port`, чтобы не перебивать порт для `.rdp`.
 - `db/engine.py`: async engine/session factory (`create_engine`, `create_sessionmaker`, `build_session_factory`).
 - `db/models/*`: предметные сущности:
   - `RdpServer`, `RdpTemplate`
@@ -90,7 +91,7 @@ RDP Relay ─────────────────────► Tar
 #### Portal (`services/portal`)
 - `app.py`: app factory, middleware stack, роуты. Интегрирован `SettingsManager` с горячей перезагрузкой (LDAP, TTL). Фоновая задача `_settings_listener` подписана на Redis pub/sub `rdp:settings:changed`.
 - `routes/auth.py`: login/logout и LDAP auth flow.
-- `routes/servers.py`: листинг доступных серверов и выдача `.rdp`.
+- `routes/servers.py`: листинг доступных серверов и выдача `.rdp`. Перед подстановкой `proxy_params` в `.rdp` выполняется `await mgr.load()`, чтобы порт/хост совпадали с БД (кеш портала иначе может отставать от админки, если pub/sub не сработал).
 - `routes/health.py`: health endpoint.
 - `dependencies.py`: DI, session extraction, config/ldap access. Добавлены `get_db_session()`, `get_redis_client()` для устранения дублирования в route-файлах.
 - `middleware/*`: security headers, correlation id, real-ip.
@@ -181,8 +182,8 @@ RDP Relay ─────────────────────► Tar
 - `cert-manager/Dockerfile`: образ sidecar-сервиса cert-manager (python + certbot + docker CLI).
 
 ### 3.5 Сервис cert-manager (`services/cert_manager`)
-- `main.py`: sidecar-процесс, подписан на Redis pub/sub канал `rdp:cert:renew`. При получении сообщения с доменом запускает `change-domain.sh` через subprocess. Graceful shutdown по SIGTERM/SIGINT. Автоматический реконнект к Redis при потере связи.
-- Контейнер `cert-manager` в `docker-compose.yml`: порт 80 для certbot HTTP-01 challenge, монтирует `/etc/letsencrypt`, `/var/run/docker.sock`, `./deploy`, конфиги.
+- `main.py`: sidecar-процесс, подписан на Redis pub/sub: `rdp:cert:renew` (домен → `change-domain.sh`) и `rdp:haproxy:recreate` (пересоздание контейнера `haproxy` через `docker compose --project-directory $HOST_PROJECT_DIR --no-deps --force-recreate up -d haproxy` с `--env-file /app/.env`, чтобы применить новый `PUBLIC_PORT`). `--project-directory` указывает хостовый каталог проекта для корректного разрешения относительных bind-mount путей Docker daemon-ом. `--no-deps` исключает пересоздание зависимых контейнеров (admin/portal/relay). Graceful shutdown по SIGTERM/SIGINT. Автоматический реконнект к Redis при потере связи.
+- Контейнер `cert-manager` в `docker-compose.yml`: порт 80 для certbot HTTP-01 challenge, монтирует `/etc/letsencrypt`, `/var/run/docker.sock`, `./deploy`, `./.env`, `docker-compose.yml`, конфиги. Переменная окружения `HOST_PROJECT_DIR` передаёт хостовый путь проекта (по умолчанию `/opt/rdpproxy`).
 
 ## 4) Схема зависимостей между модулями
 
@@ -230,10 +231,10 @@ services.cert_manager
 2. LDAP bind/search проверяется через `libs.identity.ldap_auth`.
 3. Web-session пишется в Redis (`rdp:web:*`).
 4. При выборе сервера формируется RDP token session (`rdp:token:*`).
-5. Пользователь скачивает `.rdp`, где указан внешний host/port и токен.
+5. Пользователь скачивает `.rdp`, где указан внешний host/port и токен (настройки прокси читаются из БД через `load()` на каждый запрос скачивания).
 
 ### 5.2 RDP-соединение
-1. Клиент идет на `8443`; HAProxy определяет RDP-трафик.
+1. Клиент идет на `443`; HAProxy определяет RDP-трафик.
 2. HAProxy направляет в relay и добавляет PPv2.
 3. Relay читает PPv2, извлекает токен из X.224, валидирует Redis session.
 4. Relay отправляет X.224 CC + поднимает TLS.
@@ -251,7 +252,7 @@ services.cert_manager
 
 - LDAP login, `.rdp`, CredSSP relay, admin CRUD, session tracking;
 - all-in-docker;
-- L4 mux на `8443`;
+- L4 mux на `443`;
 - PPv2 для RDP;
 - LAN-only admin;
 - metrics + cluster awareness;
@@ -288,7 +289,7 @@ services.cert_manager
 ## 9) Мини-чеклист перед изменениями
 
 1. Проверить `docker compose ps`.
-2. Проверить `https://<host>:8443/health`.
+2. Проверить `https://<host>:443/health`.
 3. Проверить `http://<LAN_IP>:9090/admin/login`.
 4. Проверить, что LDAP доступен из контейнера portal (`socket/ldap bind test`).
 5. Только после этого изменять код.

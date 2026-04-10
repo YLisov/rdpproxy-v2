@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch .env for PUBLIC_PORT changes (RDPProxy)
+
+[Path]
+PathModified=/opt/rdpproxy/.env
+Unit=rdpproxy-port-watcher.service
+
+[Install]
+WantedBy=multi-user.target

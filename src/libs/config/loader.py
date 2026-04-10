@@ -12,7 +12,7 @@ logger = logging.getLogger("rdpproxy.config")
 _DB_MANAGED_KEYS = frozenset({
     "ldap", "dns", "security.token_fingerprint_enforce",
     "security.login_attempts_per_minute", "security.login_lock_seconds",
-    "security.admin_groups", "proxy.public_host", "proxy.listen_port",
+    "security.admin_groups", "proxy.public_host", "proxy.public_port",
     "redis.web_session_ttl", "redis.web_idle_ttl", "redis.rdp_token_ttl",
 })
 
@@ -50,7 +50,7 @@ class DnsConfig(BaseModel):
 
 class ProxyConfig(BaseModel):
     public_host: str = "rdp.example.com"
-    listen_port: int = 8443
+    public_port: int = 443
     cert_path: str = ""
     key_path: str = ""
     secure_cookies: bool = True
@@ -64,7 +64,7 @@ class PortalConfig(BaseModel):
 class AdminConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 9090
-    allowed_networks: list[str] = Field(default_factory=lambda: ["10.120.0.0/24", "127.0.0.0/8"])
+    allowed_networks: list[str] = Field(default_factory=list)
     secure_cookies: bool = False
 
 
@@ -72,7 +72,7 @@ class RdpRelayConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8002
     proxy_protocol: bool = True
-    trusted_proxies: list[str] = Field(default_factory=lambda: ["172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16", "127.0.0.0/8"])
+    trusted_proxies: list[str] = Field(default_factory=list)
     max_connections: int = 500
     idle_timeout: int = 3600
     max_session_duration: int = 0

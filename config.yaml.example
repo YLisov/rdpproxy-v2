@@ -32,10 +32,21 @@ portal:
 admin:
   host: "0.0.0.0"
   port: 9090
+  # Restrict admin panel access to specific networks (CIDR).
+  # Empty list = no IP restriction (authentication still required).
+  # allowed_networks:
+  #   - "10.120.0.0/24"
+  #   - "127.0.0.0/8"
 
 rdp_relay:
   host: "0.0.0.0"
   port: 8002
+  # Networks trusted to send Proxy Protocol v2 headers.
+  # Empty list = Proxy Protocol headers ignored, direct peer IP used.
+  # trusted_proxies:
+  #   - "10.0.0.0/8"
+  #   - "172.16.0.0/12"
+  #   - "127.0.0.0/8"
 
 # ── Optional: LDAP / DNS / etc. can still be set here for initial seed ──
 # If present, values are migrated to the database on first startup and

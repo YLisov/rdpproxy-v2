@@ -1445,3 +1445,131 @@ docker compose up -d --build rdp-relay
 **Изменённые файлы**: `README.md`, `SuperAgent/Context/project-architecture.md`
 
 **Результат**: Лицензия зафиксирована в репозитории; README согласован с Apache 2.0 и GitHub.
+
+---
+## Итерация #29
+**Дата**: 2026-04-10
+**Запрос**: Убрать захардкоженные IP-ограничения из дефолтных значений конфигурации.
+
+### Действие 29.1
+**Описание**: В `src/libs/config/loader.py` удалены захардкоженные дефолтные IP-диапазоны: `AdminConfig.allowed_networks` (было `["10.120.0.0/24", "127.0.0.0/8"]` → пустой список) и `RdpRelayConfig.trusted_proxies` (было `["172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16", "127.0.0.0/8"]` → пустой список). В `config.yaml.example` добавлены закомментированные примеры настройки обоих полей с пояснениями.
+**Изменённые файлы**: `src/libs/config/loader.py`, `config.yaml.example`
+
+**Результат**: Дефолтная конфигурация больше не содержит захардкоженных IP-ограничений. Пустой `allowed_networks` = нет IP-фильтрации (только аутентификация). Пустой `trusted_proxies` = Proxy Protocol заголовки игнорируются, используется прямой IP пира.
+
+---
+## Итерация #30
+**Дата**: 2026-04-10
+**Запрос**: Заменить нестандартный порт 8443 на стандартный 443 во всём проекте.
+
+### Действие 30.1
+**Описание**: Порт публичной точки входа HAProxy изменён с `8443` на `443` (стандартный HTTPS/TLS). Изменения затронули: дефолт `ProxyConfig.listen_port` в конфигурации, `haproxy.cfg` (bind и комментарий), `docker-compose.yml` (проброс порта), `install.sh` (вывод URL без порта, т.к. 443 — дефолт для HTTPS), `README.md` (таблицы, схема, FAQ). Обновлена документация SuperAgent.
+**Изменённые файлы**: `src/libs/config/loader.py`, `deploy/haproxy/haproxy.cfg`, `docker-compose.yml`, `deploy/install.sh`, `README.md`, `SuperAgent/project-brief.md`, `SuperAgent/Context/project-architecture.md`, `SuperAgent/tech-structure.md`
+
+**Результат**: Проект использует стандартный порт 443. URL-ы в документации и инсталляторе больше не требуют явного указания порта.
+
+---
+## Итерация #31
+**Дата**: 2026-04-10
+**Запрос**: Исправить проблему: `listen_port` в конфигурации вводит в заблуждение — он не управляет портом HAProxy, а только подставляется в `.rdp`-файлы. Переименовать в `public_port`, убрать ложный «перезапуск» из админки.
+
+### Действие 31.1
+**Описание**: Полный рефакторинг `listen_port` → `public_port`:
+- `ProxyConfig.listen_port` → `ProxyConfig.public_port` в `loader.py`
+- `_DB_MANAGED_KEYS`: `proxy.listen_port` → `proxy.public_port`
+- `settings_manager.py`: `proxy_params` возвращает `public_port`; добавлен fallback на `listen_port` для обратной совместимости с существующими записями в БД
+- `portal/routes/servers.py`: `proxy["listen_port"]` → `proxy["public_port"]`
+- `admin_settings.html`: label «Порт прослушивания» → «Публичный порт», placeholder `3389` → `443`, id `proxy_listen_port` → `proxy_public_port`, убран бейдж «перезапуск» (заменён на общий «Применяется сразу»), удалён `showRestartBanner()` при смене порта, добавлена подсказка о том что это внешний порт для клиентов и HAProxy настраивается отдельно; JS загрузки значения с fallback на старый ключ `listen_port`
+**Изменённые файлы**: `src/libs/config/loader.py`, `src/libs/config/settings_manager.py`, `src/services/portal/routes/servers.py`, `src/services/admin/templates/admin_settings.html`
+
+**Результат**: Настройка порта больше не вводит в заблуждение. Название `public_port` чётко указывает, что это порт для клиентов в `.rdp`-файлах, а не порт прослушивания HAProxy. Обратная совместимость с существующими записями в БД сохранена.
+
+---
+## Итерация #32
+**Дата**: 2026-04-10
+**Запрос**: Сделать так, чтобы настройка `public_port` в админке реально управляла портом HAProxy — автоматический перезапуск контейнера через systemd path watcher.
+
+### Действие 32.1
+**Описание**: Реализована полная цепочка динамической смены порта HAProxy:
+
+1. **`docker-compose.yml`**: порт HAProxy вынесен в переменную `${PUBLIC_PORT:-443}:443`. Внутри контейнера HAProxy всегда слушает на 443, наружу маппится `PUBLIC_PORT`. В admin-контейнер примонтирован `.env` как writable том.
+
+2. **`src/services/admin/app.py`**: добавлена функция `_update_dotenv_port()` и обработка смены порта в хуке `_on_proxy_change`. При изменении `public_port` admin-сервис обновляет `PUBLIC_PORT=<значение>` в `/app/.env` (bind mount на хостовый `.env`). Отслеживание через `_prev_public_port` — запись только при реальном изменении.
+
+3. **`deploy/systemd/rdpproxy-port-watcher.path`** (новый): systemd path unit, следит за `PathModified` на `.env`.
+
+4. **`deploy/systemd/rdpproxy-port-watcher.service`** (новый): выполняет `docker compose up -d --no-build haproxy` — пересоздаёт контейнер HAProxy с новым port mapping.
+
+5. **`deploy/install.sh`**: `.env` теперь включает `PUBLIC_PORT=443` и `LAN_IP`. Добавлена установка и активация systemd watcher unit-ов (с подстановкой PROJECT_DIR через sed).
+
+6. **`admin_settings.html`**: подсказка обновлена — «При смене HAProxy будет автоматически перезапущен с новым портом».
+
+**Созданные файлы**: `deploy/systemd/rdpproxy-port-watcher.path`, `deploy/systemd/rdpproxy-port-watcher.service`
+**Изменённые файлы**: `docker-compose.yml`, `src/services/admin/app.py`, `deploy/install.sh`, `src/services/admin/templates/admin_settings.html`
+
+**Цепочка работы**: Админ меняет порт в UI → admin-сервис сохраняет в БД + пишет `PUBLIC_PORT` в `.env` → systemd замечает изменение `.env` → запускает `docker compose up -d haproxy` → контейнер пересоздаётся с новым port mapping → задержка ~5 секунд.
+
+---
+## Итерация #33
+**Дата**: 2026-04-10
+**Запрос**: В админке порт 443, портал на 443, а скачанный `.rdp` содержит порт 8443.
+
+### Действие 33.1
+**Описание**: Причина — кеш `SettingsManager` в контейнере `portal`: свойство `proxy_params` не вызывает `get()` с TTL-обновлением; при сбое или задержке Redis pub/sub портал продолжал отдавать старый `listen_port` из merge в БД. Исправления: (1) в `servers.py` перед генерацией `.rdp` вызывается `await mgr.load()`; (2) при сохранении `proxy` с `public_port` из merge и кеша удаляется устаревший `listen_port`; (3) при `load()` если в строке `proxy` есть и `public_port`, и `listen_port`, из кеша убирается `listen_port`. Обновлён `SuperAgent/Context/project-architecture.md`.
+**Изменённые файлы**: `src/services/portal/routes/servers.py`, `src/libs/config/settings_manager.py`, `SuperAgent/Context/project-architecture.md`
+
+**Результат**: Адрес и порт в `.rdp` совпадают с актуальными настройками в БД; дубликат `listen_port` в JSON настройки `proxy` больше не мешает после сохранения порта из админки.
+
+---
+## Итерация #34
+**Дата**: 2026-04-10
+**Запрос**: После смены порта на 8443 в настройках `.rdp` стал с портом 8443, но портал оставался на 443 — HAProxy не пересоздавался без systemd path watcher на хосте.
+
+### Действие 34.1
+**Описание**: Добавлен надёжный триггер пересоздания HAProxy через Redis и уже существующий `cert-manager` (есть `docker.sock`): константа `HAPROXY_RECREATE_CHANNEL` в `redis_store/keys.py`; после успешной записи `PUBLIC_PORT` в `.env` admin публикует в этот канал; `cert_manager/main.py` подписан на оба канала и выполняет `docker compose -f … -p … --env-file /app/.env up -d --no-build haproxy`. В `docker-compose.yml` у `cert-manager` смонтирован `./.env:/app/.env`. `_update_dotenv_port` возвращает `bool`; подсказка в `admin_settings.html` обновлена. `SuperAgent/Context/project-architecture.md` — раздел cert-manager.
+**Изменённые файлы**: `src/libs/redis_store/keys.py`, `docker-compose.yml`, `src/services/admin/app.py`, `src/services/cert_manager/main.py`, `src/services/admin/templates/admin_settings.html`, `SuperAgent/Context/project-architecture.md`
+
+**Результат**: Смена публичного порта в админке обновляет проброс портов HAProxy без обязательного systemd на хосте (path unit остаётся дополнительной страховкой при установке через install.sh).
+
+---
+## Итерация #35
+**Дата**: 2026-04-10
+**Запрос**: Сервер упал после сохранения настроек — все контейнеры (admin, portal, rdp-relay, haproxy) вошли в цикл рестартов.
+
+### Действие 35.1
+**Описание**: Диагностика выявила две корневые проблемы:
+1. **cert-manager пересоздавал ВСЕ контейнеры, а не только haproxy**: команда `docker compose up -d haproxy` (без `--no-deps`) пересоздавала зависимые admin/portal/relay. Новые контейнеры не могли стартовать (`No module named 'services'`).
+2. **Bind mount-ы ломались при compose из контейнера**: при запуске `docker compose -f /app/docker-compose.yml` изнутри cert-manager относительные пути (`./deploy/haproxy`) разрешались как `/app/deploy/haproxy`, а Docker daemon искал этот путь **на хосте**, где его не существует. Результат — `Cannot open haproxy.cfg`.
+
+**Исправления**:
+- В `cert_manager/main.py` добавлены флаги `--no-deps --no-build --force-recreate` — пересоздаётся строго один контейнер haproxy.
+- Добавлен `--project-directory ${HOST_PROJECT_DIR}` — compose разрешает относительные пути из хостового каталога `/opt/rdpproxy`, и bind mount-ы работают корректно.
+- В `docker-compose.yml` для cert-manager добавлена переменная окружения `HOST_PROJECT_DIR: ${HOST_PROJECT_DIR:-/opt/rdpproxy}`.
+- В `.env` на хосте добавлена строка `HOST_PROJECT_DIR=/opt/rdpproxy`.
+- В `deploy/install.sh` при генерации `.env` добавлена строка `HOST_PROJECT_DIR=${PROJECT_DIR}`.
+
+**Изменённые файлы**: `src/services/cert_manager/main.py`, `docker-compose.yml`, `deploy/install.sh`, `.env`
+
+**Результат**: Тест подтверждён — смена `PUBLIC_PORT` на 8443 → cert-manager пересоздаёт **только** haproxy с корректными volumes и port mapping `0.0.0.0:8443->443/tcp`. Все остальные сервисы не затронуты. Возврат на 443 — аналогично успешен.
+
+---
+## Итерация #36
+**Дата**: 2026-04-10
+**Запрос**: Исправление 2 багов в `deploy/install.sh`, обнаруженных при чистой установке на Ubuntu 24.04.
+
+### Действие 36.1
+**Описание**: Баг 1 — `curl -fsSL https://get.docker.com | sh -s -- --quiet` содержит невалидный флаг `--quiet`. Текущая версия `get.docker.com` не поддерживает его, выводит «Illegal option --quiet», при `set -euo pipefail` это прерывает весь скрипт.
+**Исправление**: заменено на `curl -fsSL https://get.docker.com | sh < /dev/null 2>&1` (вывод заглушен редиректом вместо флага).
+
+### Действие 36.2
+**Описание**: Баг 2 — миграции Alembic запускались ПОСЛЕ `docker compose up -d` (секция 14). Контейнеры portal и admin при старте выполняют `SELECT ... FROM portal_settings`, но таблица ещё не создана — миграции не применены. Контейнеры крашатся, healthcheck не проходит, скрипт зависает.
+**Исправление**: полностью перестроен порядок запуска (секции 12-15):
+1. `docker compose build` — сборка образов
+2. `docker compose up -d postgres redis` — только БД
+3. `wait_healthy postgres 60` + `wait_healthy redis 60`
+4. `docker compose run --rm -T --no-deps portal python -c "...alembic upgrade head..."` — миграции через одноразовый контейнер
+5. `docker compose up -d` — запуск всех сервисов (таблицы уже на месте)
+6. `wait_healthy portal 120` + `wait_healthy admin 120`
+7. Создание admin-пользователя
+
+**Изменённые файлы**: `deploy/install.sh`

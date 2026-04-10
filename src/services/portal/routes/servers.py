@@ -84,6 +84,9 @@ async def rdp_download(request: Request, server_id: str) -> PlainTextResponse:
     store = get_session_store(request)
     factory = get_db_sessionmaker(request)
     mgr = get_settings_manager(request)
+    # Always reload proxy (and other) settings from DB: portal cache is not updated
+    # on admin saves unless Redis pub/sub fires; stale port breaks .rdp "full address".
+    await mgr.load()
     proxy = mgr.proxy_params
 
     async with factory() as dbs:
@@ -108,7 +111,7 @@ async def rdp_download(request: Request, server_id: str) -> PlainTextResponse:
     async with factory() as dbs:
         content = await build_rdp_content(
             db_session=dbs, user_group_guids=session.group_guids,
-            proxy_host=proxy["public_host"], proxy_port=proxy["listen_port"], token=token,
+            proxy_host=proxy["public_host"], proxy_port=proxy["public_port"], token=token,
         )
     headers = {"Content-Disposition": f'attachment; filename="{server_id}.rdp"'}
     return PlainTextResponse(content=content, media_type="application/x-rdp", headers=headers)
