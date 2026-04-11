@@ -204,7 +204,7 @@ if [ "$USE_IMAGE" = true ]; then
       rdpproxy-main/docker-compose.yml \
       rdpproxy-main/config.yaml.example \
       rdpproxy-main/.env.example \
-      rdpproxy-main/deploy/haproxy/haproxy.cfg < /dev/null
+      rdpproxy-main/deploy/haproxy/haproxy.cfg
     PROJECT_DIR="${INSTALL_DIR}"
     info "$PROJECT_DIR"
   fi
