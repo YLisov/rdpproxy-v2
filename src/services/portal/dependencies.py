@@ -99,7 +99,7 @@ async def get_portal_name(request: Request) -> str:
     """Resolve portal display name from SettingsManager."""
     mgr: SettingsManager | None = getattr(request.app.state, "settings_manager", None)
     if mgr is None:
-        return "DC319"
+        return "RDP-Proxy"
     portal = await mgr.get("portal")
-    name = portal.get("name", "DC319") if portal else "DC319"
-    return name or "DC319"
+    name = portal.get("name", "RDP-Proxy") if portal else "RDP-Proxy"
+    return name or "RDP-Proxy"

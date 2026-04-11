@@ -230,7 +230,7 @@ class SettingsManager:
         out["redis_ttl"] = self.redis_ttl
         out["relay"] = self.relay_params
         raw_portal = self._cache.get("portal")
-        out["portal"] = raw_portal if raw_portal else {"name": "DC319"}
+        out["portal"] = raw_portal if raw_portal else {"name": "RDP-Proxy"}
         return out
 
     # ── internal ──
@@ -265,7 +265,7 @@ class SettingsManager:
                 "max_session_duration": self._base.rdp_relay.max_session_duration,
             }
         if key == "portal":
-            return {"name": "DC319"}
+            return {"name": "RDP-Proxy"}
         return None
 
     async def _seed_from_yaml(self) -> None:

@@ -185,7 +185,9 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
   info "$MSG_DOCKER_OK ($(docker --version | cut -d' ' -f3 | tr -d ','))"
 else
   info "$MSG_INSTALL_DOCKER"
-  curl -fsSL https://get.docker.com | sh < /dev/null 2>&1
+  curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+  sh /tmp/get-docker.sh < /dev/null
+  rm -f /tmp/get-docker.sh
   systemctl enable --now docker
   info "Docker $(docker --version | cut -d' ' -f3 | tr -d ',')"
 fi
@@ -486,28 +488,32 @@ wait_healthy admin 120
 # ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_CREATE_ADMIN"
-docker compose exec -T admin python -c "
-import asyncio, uuid, sys
+cat > /tmp/_create_admin.py <<'PYEOF'
+import asyncio, uuid, sys, os
 sys.path.insert(0, '/app/src/libs')
 sys.path.insert(0, '/app/src')
 from security.passwords import hash_password
 import asyncpg
 
 async def main():
-    conn = await asyncpg.connect('postgresql://rdpproxy:${DB_PASSWORD}@postgres:5432/rdpproxy')
+    db_pass = os.environ["DB_PASSWORD"]
+    conn = await asyncpg.connect(f'postgresql://rdpproxy:{db_pass}@postgres:5432/rdpproxy')
     existing = await conn.fetchval(
-        \"SELECT count(*) FROM admin_users WHERE username = \\\$1\", 'admin'
+        "SELECT count(*) FROM admin_users WHERE username = $1", 'admin'
     )
     if existing == 0:
         await conn.execute(
             'INSERT INTO admin_users (id, username, password_hash, must_change_password) '
-            'VALUES (\$1, \$2, \$3, true)',
+            'VALUES ($1, $2, $3, true)',
             uuid.uuid4(), 'admin', hash_password('admin'),
         )
     await conn.close()
 
 asyncio.run(main())
-"
+PYEOF
+docker cp /tmp/_create_admin.py "$(docker compose ps -q admin)":/tmp/_create_admin.py
+docker compose exec -T -e DB_PASSWORD="${DB_PASSWORD}" admin python /tmp/_create_admin.py
+rm -f /tmp/_create_admin.py
 info "admin / admin (must_change_password=true)"
 
 # ═════════════════════════════════════════════════════════════════════

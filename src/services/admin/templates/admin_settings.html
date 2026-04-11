@@ -53,9 +53,9 @@
   <div id="panel-general" class="panel active">
     <p class="hint">Наименование портала используется в теге <code>&lt;title&gt;</code> пользовательского портала и страницы входа. <span class="apply-badge hot">Применяется сразу</span></p>
     <label>Наименование портала
-      <input id="portal_name" type="text" maxlength="128" placeholder="DC319">
+      <input id="portal_name" type="text" maxlength="128" placeholder="RDP-Proxy">
     </label>
-    <p class="hint">Публичный адрес и порт, которые подставляются в RDP-файл при скачивании. <span class="apply-badge hot">Применяется сразу</span></p>
+    <p class="hint">Публичный адрес и порт для подключения клиентов. Используются в RDP-файлах, SSL-сертификатах и конфигурации HAProxy. <span class="apply-badge hot">Применяется сразу</span></p>
     <label>Публичный адрес (host) <input id="proxy_public_host" type="text" placeholder="rdp.example.com"></label>
     <p class="hint cert-warn" id="certWarn" style="display:none;color:#92400e;background:#fef3c7;padding:8px 12px;border-radius:6px;margin-top:-8px">
       При смене домена будет автоматически выпущен новый SSL-сертификат Let's Encrypt. Убедитесь, что DNS для нового домена уже указывает на этот сервер (порт 80 доступен).
@@ -199,7 +199,7 @@
 
   function fillForms() {
     const PS = settings.portal || {};
-    document.getElementById('portal_name').value = PS.name || 'DC319';
+    document.getElementById('portal_name').value = PS.name || 'RDP-Proxy';
 
     const L = settings.ldap || {};
     document.getElementById('ldap_server').value = L.server || '';
@@ -276,7 +276,7 @@
         document.getElementById('proxy_public_host').value.trim() !== _savedPublicHost;
       if (key === 'general') {
         payloads = {
-          portal: { name: document.getElementById('portal_name').value.trim() || 'DC319' },
+          portal: { name: document.getElementById('portal_name').value.trim() || 'RDP-Proxy' },
           proxy: {
             public_host: document.getElementById('proxy_public_host').value.trim() || undefined,
             public_port: document.getElementById('proxy_public_port').value

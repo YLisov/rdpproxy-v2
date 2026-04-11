@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>{{ portal_name or 'DC319' }}</title>
+  <title>{{ portal_name or 'RDP-Proxy' }}</title>
   <style>
     :root {
       --header-bg: #574f5b;
@@ -581,7 +581,7 @@
   {% else %}
   <div id="portalOverlay" class="portal-overlay" aria-hidden="true"></div>
   <aside id="portalDrawer" class="portal-drawer" aria-hidden="true" aria-label="Меню портала">
-    <div class="portal-drawer-head">{{ portal_name or 'DC319' }}</div>
+    <div class="portal-drawer-head">{{ portal_name or 'RDP-Proxy' }}</div>
     <nav class="portal-drawer-nav" aria-label="Разделы">
       <a class="portal-drawer-link active" href="/">Рабочие столы</a>
     </nav>
@@ -595,7 +595,7 @@
       <button type="button" class="nav-burger mobile-only" id="navBurger" aria-label="Открыть меню" aria-expanded="false" aria-controls="portalDrawer">
         <span class="nav-burger-lines" aria-hidden="true"><span></span><span></span><span></span></span>
       </button>
-      <div class="left">{{ portal_name or 'DC319' }}</div>
+      <div class="left">{{ portal_name or 'RDP-Proxy' }}</div>
       <nav class="portal-menu desktop-only-nav" aria-label="Разделы портала">
         <a class="portal-menu-item active" href="/">Рабочие столы</a>
       </nav>

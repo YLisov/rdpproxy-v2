@@ -69,8 +69,8 @@ def create_app(config: AppConfig) -> FastAPI:
         if cached is not None:
             return cached
         portal = await settings_mgr.get("portal")
-        name = portal.get("name", "DC319") if portal else "DC319"
-        app.state.portal_name_cache = name or "DC319"
+        name = portal.get("name", "RDP-Proxy") if portal else "RDP-Proxy"
+        app.state.portal_name_cache = name or "RDP-Proxy"
         return app.state.portal_name_cache
 
     app.state.load_portal_name = _load_portal_name

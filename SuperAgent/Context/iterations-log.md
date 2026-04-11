@@ -1573,3 +1573,41 @@ docker compose up -d --build rdp-relay
 7. Создание admin-пользователя
 
 **Изменённые файлы**: `deploy/install.sh`
+
+---
+## Итерация #37
+**Дата**: 2026-04-11
+**Запрос**: Исправление двух багов в установщике deploy/install.sh
+
+### Действие 37.1
+**Описание**: Баг 1 — установка Docker падала с `curl: (23) Failure writing output to destination`
+**Причина**: конструкция `curl ... | sh < /dev/null 2>&1` вызывала EPIPE из-за конфликта pipe-буфера и перенаправлений
+**Исправление**: разделено скачивание и выполнение — curl сохраняет скрипт в `/tmp/get-docker.sh`, затем `sh` выполняет его отдельно
+
+### Действие 37.2
+**Описание**: Баг 2 — создание admin-пользователя падало с `asyncpg.exceptions.PostgresSyntaxError`
+**Причина**: Python-код передавался через `docker compose exec ... python -c "..."` в двойных кавычках bash; asyncpg-плейсхолдеры `$1`, `$2`, `$3` ломались при многослойном экранировании (bash → docker → sh → python)
+**Исправление**: Python-скрипт записывается в файл через heredoc `<<'PYEOF'` (без интерпретации bash), копируется в контейнер через `docker cp`, пароль БД передаётся через переменную окружения `-e DB_PASSWORD`
+
+**Изменённые файлы**: `deploy/install.sh`
+
+---
+## Итерация #38
+**Дата**: 2026-04-11
+**Запрос**: Два мелких исправления — дефолтное название портала и комментарий в админке
+
+### Действие 38.1
+**Описание**: Замена дефолтного названия портала `DC319` → `RDP-Proxy` во всех файлах
+**Затронутые файлы**:
+- `src/services/admin/templates/admin_settings.html` — placeholder, JS-fallback при загрузке и сохранении
+- `src/services/admin/app.py` — fallback в `_load_portal_name()`
+- `src/libs/config/settings_manager.py` — дефолт при отсутствии portal-секции
+- `src/services/portal/dependencies.py` — fallback в `get_portal_name()`
+- `src/services/portal/templates/login.html` — Jinja-fallback в `<title>`, шапке и drawer
+
+### Действие 38.2
+**Описание**: Исправлен комментарий-hint для поля «Публичный адрес / порт» в админке
+**Было**: «Публичный адрес и порт, которые подставляются в RDP-файл при скачивании»
+**Стало**: «Публичный адрес и порт для подключения клиентов. Используются в RDP-файлах, SSL-сертификатах и конфигурации HAProxy»
+
+**Изменённые файлы**: `src/services/admin/templates/admin_settings.html`, `src/services/admin/app.py`, `src/libs/config/settings_manager.py`, `src/services/portal/dependencies.py`, `src/services/portal/templates/login.html`
