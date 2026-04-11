@@ -38,22 +38,33 @@ RDP Relay ─────────────────────► Tar
 ├── assets/
 │   └── images/
 │       └── ReceiverFullScreenBackground.jpg   # локальная копия фона страницы входа ADC
-├── docker-compose.yml
+├── docker-compose.yml         # основной стек — готовые образы с Docker Hub (dc319/rdpproxy)
+├── docker-compose.dev.yml     # стек для разработки (build из Dockerfile)
 ├── Dockerfile
 ├── requirements.txt
 ├── alembic.ini
 ├── config.yaml.example
 ├── config.yaml                # локальный runtime, gitignored
-├── .env.example
+├── .env.example               # включает RDPPROXY_IMAGE_TAG для image-режима
 ├── .env                       # локальный runtime, gitignored
 ├── LICENSE                    # Apache License 2.0 (исходный код репозитория)
 ├── README.md                  # пользовательская документация: назначение продукта, установка, эксплуатация, FAQ
+├── .github/
+│   └── workflows/
+│       └── docker-hub-publish.yml  # CI: сборка и push образа dc319/rdpproxy
 ├── deploy/
+│   ├── docker-push.sh         # ручная сборка и push на Docker Hub
+│   └── ...
 └── src/
 ```
 
 Примечание по сборке контейнеров:
 - `Dockerfile` включает `COPY assets/ ./assets/`, чтобы статические ассеты (например фон логина) были доступны внутри `portal` контейнера по пути `/app/assets`.
+- `docker-compose.yml` — основной стек, использует `image: dc319/rdpproxy:${RDPPROXY_IMAGE_TAG:-latest}` (готовые образы Docker Hub).
+- `docker-compose.dev.yml` — для разработки, использует `build: .` (сборка из исходников).
+- `deploy/install.sh` — по умолчанию ставит с готовыми образами; `--build` включает сборку из исходников.
+- `deploy/docker-push.sh [TAG]` — ручная сборка и публикация на Docker Hub.
+- `.github/workflows/docker-hub-publish.yml` — CI: push тега `v*` или ручной запуск → build+push на Docker Hub.
 
 ### 3.2 Shared libs (`src/libs`)
 

@@ -1,10 +1,7 @@
-# Основной стек RDPProxy — готовые образы с Docker Hub (dc319/rdpproxy).
-# Для разработки (сборка из исходников): docker compose -f docker-compose.dev.yml up -d
+# Стек для разработки — сборка из исходников (build: .).
+# Для продакшена / пользователей используйте docker-compose.yml (готовые образы Docker Hub).
 #
-# Тег образа задаётся переменной RDPPROXY_IMAGE_TAG в .env (по умолчанию latest).
-#
-# Запуск:     docker compose up -d
-# Обновление: docker compose pull && docker compose up -d
+# Запуск: docker compose -f docker-compose.dev.yml up -d
 
 services:
   postgres:
@@ -72,7 +69,7 @@ services:
     restart: unless-stopped
 
   portal:
-    image: dc319/rdpproxy:${RDPPROXY_IMAGE_TAG:-latest}
+    build: .
     command: python -m services.portal.main
     volumes:
       - ./config.yaml:/app/config.yaml:ro
@@ -97,7 +94,7 @@ services:
     restart: unless-stopped
 
   rdp-relay:
-    image: dc319/rdpproxy:${RDPPROXY_IMAGE_TAG:-latest}
+    build: .
     command: python -m services.rdp_relay.main
     volumes:
       - ./config.yaml:/app/config.yaml:ro
@@ -123,7 +120,7 @@ services:
     restart: unless-stopped
 
   admin:
-    image: dc319/rdpproxy:${RDPPROXY_IMAGE_TAG:-latest}
+    build: .
     command: python -m services.admin.main
     ports:
       - "80:80"
@@ -154,7 +151,7 @@ services:
     restart: unless-stopped
 
   metrics:
-    image: dc319/rdpproxy:${RDPPROXY_IMAGE_TAG:-latest}
+    build: .
     command: python -m services.metrics.main
     volumes:
       - ./config.yaml:/app/config.yaml:ro

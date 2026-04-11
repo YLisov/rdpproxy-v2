@@ -1919,3 +1919,43 @@ docker compose up -d --build rdp-relay
 **Описание**: Добавлено отслеживание изменения публичного порта в UI (`_savedPublicPort`). При сохранении с изменённым портом показывается жёлтый баннер с инструкцией: `docker compose up -d --force-recreate haproxy`. Порт нельзя обновить hot-reload'ом — он задан в docker-compose.yml через `${PUBLIC_PORT}`, поэтому требуется пересоздание контейнера.
 
 **Изменённые файлы**: `src/services/admin/templates/admin_settings.html`
+
+---
+## Итерация #57
+**Время начала**: 2026-04-11
+**Запрос**: Добавить поддержку предсобранных Docker-образов с Docker Hub (dc319/rdpproxy) для пользовательской установки, параллельно с существующей сборкой из исходников для разработки
+
+### Действие 57.1
+**Описание**: Создан `docker-compose.image.yml` — полная копия стека, но вместо `build: .` у сервисов portal, rdp-relay, admin, metrics используется `image: dc319/rdpproxy:${RDPPROXY_IMAGE_TAG:-0.1.0-b1}`. Сервисы postgres, redis, haproxy остались без изменений (официальные образы). Текущий `docker-compose.yml` не тронут.
+**Созданные файлы**: `docker-compose.image.yml`
+
+### Действие 57.2
+**Описание**: Создан скрипт `deploy/docker-push.sh` для ручной сборки и публикации образа на Docker Hub. Принимает тег как аргумент (по умолчанию `0.1.0-b1`). Выполняет `docker build` + `docker push`.
+**Созданные файлы**: `deploy/docker-push.sh`
+
+### Действие 57.3
+**Описание**: Создан GitHub Actions workflow `.github/workflows/docker-hub-publish.yml`. Триггеры: push тега `v*` (автоматически), workflow_dispatch (ручной запуск с указанием тега). Использует docker/build-push-action с GHA cache. Требует секреты `DOCKERHUB_USERNAME` и `DOCKERHUB_TOKEN`.
+**Созданные файлы**: `.github/workflows/docker-hub-publish.yml`
+
+### Действие 57.4
+**Описание**: В `.env.example` добавлена закомментированная переменная `RDPPROXY_IMAGE_TAG` для фиксации версии образа.
+**Изменённые файлы**: `.env.example`
+
+### Действие 57.5
+**Описание**: В `README.md` добавлены разделы: «Установка с готовыми образами (Docker Hub)» с инструкциями по запуску и обновлению; обновлён раздел «Обновление» с двумя вариантами (из исходников / Docker Hub); добавлена команда `install.sh --image` в секцию быстрой установки.
+**Изменённые файлы**: `README.md`
+
+### Действие 57.6
+**Описание**: В `deploy/install.sh` добавлена поддержка флага `--image`: при его наличии используется `docker compose -f docker-compose.image.yml` (pull вместо build), systemd unit также генерируется с правильной командой, финальное сообщение показывает корректную compose-команду.
+**Изменённые файлы**: `deploy/install.sh`
+
+### Действие 57.7
+**Описание**: Обновлена документация `project-architecture.md` — добавлены `docker-compose.image.yml`, `.github/workflows/`, `deploy/docker-push.sh` в структуру файлов и примечания по сборке.
+
+### Действие 57.8
+**Описание**: Инвертирована логика install.sh: по умолчанию `USE_IMAGE=true` (готовые образы Docker Hub), флаг `--build` / `--source` включает сборку из исходников. Добавлены раздельные i18n-сообщения `MSG_BUILD_SRC` и `MSG_BUILD_HUB`. Обновлён README.md — стандартным путём установки стала загрузка готовых образов, `--build` описан как альтернатива для разработки.
+**Изменённые файлы**: `deploy/install.sh`, `README.md`
+
+### Действие 57.9
+**Описание**: Переименованы compose-файлы: `docker-compose.yml` (сборка) → `docker-compose.dev.yml`, `docker-compose.image.yml` (образы Hub) → `docker-compose.yml`. Теперь основной файл — с готовыми образами, пользователям достаточно `docker compose up -d`. Обновлены все ссылки в `install.sh` (systemd unit, COMPOSE_CMD, финальное сообщение), `README.md`, `.env.example`, `project-architecture.md`. Добавлен комментарий-заголовок в `docker-compose.dev.yml`.
+**Изменённые файлы**: `docker-compose.yml` (бывший image), `docker-compose.dev.yml` (бывший yml), `deploy/install.sh`, `README.md`, `.env.example`, `project-architecture.md`

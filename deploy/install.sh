@@ -5,6 +5,14 @@ set -euo pipefail
 REPO_URL="https://github.com/YLisov/rdpproxy.git"
 INSTALL_DIR="/opt/rdpproxy"
 
+# ─── By default: pre-built Docker Hub images; --build to compile from source ─
+USE_IMAGE=true
+for arg in "$@"; do
+  case "$arg" in
+    --build|--source) USE_IMAGE=false ;;
+  esac
+done
+
 # ─── Colors ─────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -48,7 +56,8 @@ setup_i18n() {
       MSG_WRITE_CONFIG="Создание config.yaml..."
       MSG_SYSCTL="Настройка параметров ядра (TCP/BBR)..."
       MSG_SYSTEMD="Создание systemd-юнита..."
-      MSG_BUILD="Сборка Docker-образов..."
+      MSG_BUILD_SRC="Сборка Docker-образов..."
+      MSG_BUILD_HUB="Загрузка образов с Docker Hub..."
       MSG_CERTS_DIR="Каталог сертификатов (права для ACME в admin)..."
       MSG_START="Запуск сервисов..."
       MSG_WAIT_HEALTH="Ожидание готовности сервисов..."
@@ -60,7 +69,7 @@ setup_i18n() {
       MSG_SECRETS_AT="Секреты сохранены в:"
       MSG_NEXT_STEP="Следующий шаг: войдите в админку → Настройки → укажите домен."
       MSG_NEXT_STEP2="Сертификат Let's Encrypt будет получен автоматически."
-      MSG_NEXT_STEP3="Затем выполните: docker compose up -d"
+      MSG_NEXT_STEP3="Затем выполните: %COMPOSE_UP%"
       MSG_REBOOT_HINT="Для применения обновлений ядра может потребоваться перезагрузка."
       MSG_HEALTH_FAIL="Сервис %s не поднялся за отведённое время."
       MSG_STOP_PREV="Обнаружены контейнеры от предыдущего запуска — останавливаю..."
@@ -88,7 +97,8 @@ setup_i18n() {
       MSG_WRITE_CONFIG="Creating config.yaml..."
       MSG_SYSCTL="Configuring kernel parameters (TCP/BBR)..."
       MSG_SYSTEMD="Creating systemd unit..."
-      MSG_BUILD="Building Docker images..."
+      MSG_BUILD_SRC="Building Docker images..."
+      MSG_BUILD_HUB="Pulling images from Docker Hub..."
       MSG_CERTS_DIR="TLS certificate directory (permissions for ACME in admin)..."
       MSG_START="Starting services..."
       MSG_WAIT_HEALTH="Waiting for services to become healthy..."
@@ -100,7 +110,7 @@ setup_i18n() {
       MSG_SECRETS_AT="Secrets saved to:"
       MSG_NEXT_STEP="Next step: log into admin panel → Settings → set your domain."
       MSG_NEXT_STEP2="A Let's Encrypt certificate will be obtained automatically."
-      MSG_NEXT_STEP3="Then run: docker compose up -d"
+      MSG_NEXT_STEP3="Then run: %COMPOSE_UP%"
       MSG_REBOOT_HINT="A reboot may be required to apply kernel updates."
       MSG_HEALTH_FAIL="Service %s did not become healthy in time."
       MSG_STOP_PREV="Found containers from a previous run — stopping..."
@@ -260,6 +270,11 @@ info "BBR + TCP buffers"
 # ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_SYSTEMD"
+if [ "$USE_IMAGE" = true ]; then
+  SYSTEMD_COMPOSE="/usr/bin/docker compose"
+else
+  SYSTEMD_COMPOSE="/usr/bin/docker compose -f docker-compose.dev.yml"
+fi
 cat > /etc/systemd/system/rdpproxy.service <<EOF
 [Unit]
 Description=RDPProxy
@@ -270,8 +285,8 @@ Requires=docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=${PROJECT_DIR}
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
+ExecStart=${SYSTEMD_COMPOSE} up -d
+ExecStop=${SYSTEMD_COMPOSE} down
 
 [Install]
 WantedBy=multi-user.target
@@ -285,16 +300,29 @@ info "rdpproxy.service"
 #  11. Build images
 # ═════════════════════════════════════════════════════════════════════
 
-step "$MSG_BUILD"
-
-# Stop containers from a previous run
-if docker compose ps -q 2>/dev/null | grep -q .; then
-  warn "$MSG_STOP_PREV"
-  docker compose down --remove-orphans < /dev/null 2>/dev/null || true
+if [ "$USE_IMAGE" = true ]; then
+  step "$MSG_BUILD_HUB"
+  COMPOSE_CMD="docker compose"
+else
+  step "$MSG_BUILD_SRC"
+  COMPOSE_CMD="docker compose -f docker-compose.dev.yml"
 fi
 
-docker compose build --quiet < /dev/null
-info "docker compose build"
+# Stop containers from a previous run (check both compose files)
+if docker compose ps -q 2>/dev/null | grep -q . || \
+   docker compose -f docker-compose.dev.yml ps -q 2>/dev/null | grep -q .; then
+  warn "$MSG_STOP_PREV"
+  docker compose down --remove-orphans < /dev/null 2>/dev/null || true
+  docker compose -f docker-compose.dev.yml down --remove-orphans < /dev/null 2>/dev/null || true
+fi
+
+if [ "$USE_IMAGE" = true ]; then
+  ${COMPOSE_CMD} pull < /dev/null
+  info "docker compose pull (Docker Hub)"
+else
+  ${COMPOSE_CMD} build --quiet < /dev/null
+  info "docker compose build"
+fi
 
 # ═════════════════════════════════════════════════════════════════════
 #  11b. Certificate directory: admin runs as non-root (appuser), must own /app/certs mount
@@ -302,7 +330,7 @@ info "docker compose build"
 
 step "$MSG_CERTS_DIR"
 mkdir -p "${PROJECT_DIR}/deploy/haproxy/certs"
-CERT_UID="$(docker compose run --rm --no-deps -T admin id -u < /dev/null)"
+CERT_UID="$(${COMPOSE_CMD} run --rm --no-deps -T admin id -u < /dev/null)"
 chown -R "${CERT_UID}:${CERT_UID}" "${PROJECT_DIR}/deploy/haproxy/certs"
 chmod -R u+rwX "${PROJECT_DIR}/deploy/haproxy/certs"
 info "deploy/haproxy/certs (uid ${CERT_UID})"
@@ -319,7 +347,7 @@ info "deploy/haproxy/run (mode 777 for haproxy socket)"
 wait_healthy() {
   local svc="$1" max_wait="${2:-120}" elapsed=0
   while [ $elapsed -lt $max_wait ]; do
-    status="$(docker compose ps --format '{{.Health}}' "$svc" 2>/dev/null || true)"
+    status="$(${COMPOSE_CMD} ps --format '{{.Health}}' "$svc" 2>/dev/null || true)"
     if [ "$status" = "healthy" ]; then
       info "$svc"
       return 0
@@ -332,14 +360,14 @@ wait_healthy() {
 }
 
 step "$MSG_START"
-docker compose up -d postgres redis < /dev/null
+${COMPOSE_CMD} up -d postgres redis < /dev/null
 info "postgres + redis"
 
 step "$MSG_WAIT_HEALTH"
 wait_healthy postgres 60
 wait_healthy redis 60
 
-docker compose up -d admin metrics < /dev/null
+${COMPOSE_CMD} up -d admin metrics < /dev/null
 info "admin + metrics"
 
 step "$MSG_WAIT_HEALTH"
@@ -373,8 +401,8 @@ async def main():
 
 asyncio.run(main())
 PYEOF
-docker cp /tmp/_create_admin.py "$(docker compose ps -q admin)":/tmp/_create_admin.py
-docker compose exec -T -e DB_PASSWORD="${DB_PASSWORD}" admin python /tmp/_create_admin.py
+docker cp /tmp/_create_admin.py "$(${COMPOSE_CMD} ps -q admin)":/tmp/_create_admin.py
+${COMPOSE_CMD} exec -T -e DB_PASSWORD="${DB_PASSWORD}" admin python /tmp/_create_admin.py
 rm -f /tmp/_create_admin.py
 info "admin / admin (must_change_password=true)"
 
@@ -394,7 +422,12 @@ printf "  %s\n\n" "$MSG_CHANGE_PASS"
 
 printf "  %s\n" "$MSG_NEXT_STEP"
 printf "  %s\n" "$MSG_NEXT_STEP2"
-printf "  %s\n\n" "$MSG_NEXT_STEP3"
+if [ "$USE_IMAGE" = true ]; then
+  COMPOSE_UP_CMD="docker compose up -d"
+else
+  COMPOSE_UP_CMD="docker compose -f docker-compose.dev.yml up -d"
+fi
+printf "  %s\n\n" "${MSG_NEXT_STEP3//%COMPOSE_UP%/$COMPOSE_UP_CMD}"
 
 printf "  %s ${CYAN}%s/.env${NC}\n" "$MSG_SECRETS_AT" "$PROJECT_DIR"
 printf "  %s\n" "$MSG_REBOOT_HINT"
