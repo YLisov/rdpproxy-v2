@@ -40,37 +40,29 @@ setup_i18n() {
       MSG_CLONE="Клонирование репозитория..."
       MSG_CLONE_EXISTS="Репозиторий уже существует, работаем на месте"
       MSG_DIALOG_HEADER="Настройка параметров"
-      MSG_DOMAIN="Домен для SSL-сертификата (Enter — пропустить):"
-      MSG_EMAIL="Email для Let's Encrypt:"
       MSG_NODEID="Node ID (Enter — сгенерировать случайный):"
       MSG_DBPASS="Пароль базы данных (Enter — сгенерировать):"
       MSG_REDISPASS="Пароль Redis (Enter — сгенерировать):"
       MSG_GEN_SECRETS="Генерация секретов..."
       MSG_WRITE_ENV="Создание .env..."
       MSG_WRITE_CONFIG="Создание config.yaml..."
-      MSG_CERT_LE="Получение сертификата Let's Encrypt..."
-      MSG_CERT_SELF="Генерация self-signed сертификата..."
-      MSG_CERT_LE_FAIL="Не удалось получить сертификат LE. Используется self-signed."
       MSG_SYSCTL="Настройка параметров ядра (TCP/BBR)..."
       MSG_SYSTEMD="Создание systemd-юнита..."
       MSG_BUILD="Сборка Docker-образов..."
       MSG_START="Запуск сервисов..."
       MSG_WAIT_HEALTH="Ожидание готовности сервисов..."
-      MSG_MIGRATE="Применение миграций базы данных..."
       MSG_CREATE_ADMIN="Создание администратора (admin/admin)..."
       MSG_DONE="Установка завершена!"
       MSG_ADMIN_URL="Панель администратора:"
-      MSG_PORTAL_URL="Портал пользователей:"
       MSG_CREDS="Логин: admin / Пароль: admin"
       MSG_CHANGE_PASS="(система попросит сменить пароль при первом входе)"
       MSG_SECRETS_AT="Секреты сохранены в:"
       MSG_NEXT_STEP="Следующий шаг: войдите в админку → Настройки → укажите домен."
-      MSG_NEXT_STEP_CERT="Cert-manager автоматически выпустит сертификат Let's Encrypt."
+      MSG_NEXT_STEP2="Сертификат Let's Encrypt будет получен автоматически."
+      MSG_NEXT_STEP3="Затем выполните: docker compose up -d"
       MSG_REBOOT_HINT="Для применения обновлений ядра может потребоваться перезагрузка."
       MSG_HEALTH_FAIL="Сервис %s не поднялся за отведённое время."
-      MSG_SELFSIGNED_WARN="Используется self-signed сертификат — браузер покажет предупреждение."
       MSG_STOP_PREV="Обнаружены контейнеры от предыдущего запуска — останавливаю..."
-      MSG_PORT80_BUSY="Порт 80 занят другим процессом — используется self-signed сертификат."
       ;;
     *)
       MSG_WELCOME="RDPProxy Installer"
@@ -87,37 +79,29 @@ setup_i18n() {
       MSG_CLONE="Cloning repository..."
       MSG_CLONE_EXISTS="Repository already present, using local copy"
       MSG_DIALOG_HEADER="Configuration"
-      MSG_DOMAIN="Domain for SSL certificate (Enter to skip):"
-      MSG_EMAIL="Email for Let's Encrypt:"
       MSG_NODEID="Node ID (Enter to generate random):"
       MSG_DBPASS="Database password (Enter to generate):"
       MSG_REDISPASS="Redis password (Enter to generate):"
       MSG_GEN_SECRETS="Generating secrets..."
       MSG_WRITE_ENV="Creating .env..."
       MSG_WRITE_CONFIG="Creating config.yaml..."
-      MSG_CERT_LE="Obtaining Let's Encrypt certificate..."
-      MSG_CERT_SELF="Generating self-signed certificate..."
-      MSG_CERT_LE_FAIL="Failed to obtain LE certificate. Using self-signed."
       MSG_SYSCTL="Configuring kernel parameters (TCP/BBR)..."
       MSG_SYSTEMD="Creating systemd unit..."
       MSG_BUILD="Building Docker images..."
       MSG_START="Starting services..."
       MSG_WAIT_HEALTH="Waiting for services to become healthy..."
-      MSG_MIGRATE="Running database migrations..."
       MSG_CREATE_ADMIN="Creating admin user (admin/admin)..."
       MSG_DONE="Installation complete!"
       MSG_ADMIN_URL="Admin panel:"
-      MSG_PORTAL_URL="User portal:"
       MSG_CREDS="Login: admin / Password: admin"
       MSG_CHANGE_PASS="(you will be asked to change password on first login)"
       MSG_SECRETS_AT="Secrets saved to:"
       MSG_NEXT_STEP="Next step: log into admin panel → Settings → set your domain."
-      MSG_NEXT_STEP_CERT="Cert-manager will automatically issue a Let's Encrypt certificate."
+      MSG_NEXT_STEP2="A Let's Encrypt certificate will be obtained automatically."
+      MSG_NEXT_STEP3="Then run: docker compose up -d"
       MSG_REBOOT_HINT="A reboot may be required to apply kernel updates."
       MSG_HEALTH_FAIL="Service %s did not become healthy in time."
-      MSG_SELFSIGNED_WARN="Using self-signed certificate — browser will show a warning."
       MSG_STOP_PREV="Found containers from a previous run — stopping..."
-      MSG_PORT80_BUSY="Port 80 is in use by another process — using self-signed certificate."
       ;;
   esac
 }
@@ -170,8 +154,8 @@ apt-get upgrade -y -qq < /dev/null
 # ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_INSTALL_DEPS"
-apt-get install -y -qq git curl openssl certbot ca-certificates < /dev/null >/dev/null
-info "git, curl, openssl, certbot"
+apt-get install -y -qq git curl openssl ca-certificates < /dev/null >/dev/null
+info "git, curl, openssl"
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   info "$MSG_DOCKER_OK ($(docker --version | cut -d' ' -f3 | tr -d ','))"
@@ -210,17 +194,6 @@ cd "$PROJECT_DIR"
 
 step "$MSG_DIALOG_HEADER"
 
-printf "\n  ${BOLD}%s${NC}\n" "$MSG_DOMAIN"
-read -rp "  > " INPUT_DOMAIN < /dev/tty
-DOMAIN="${INPUT_DOMAIN:-}"
-
-LE_EMAIL=""
-if [ -n "$DOMAIN" ]; then
-  printf "\n  ${BOLD}%s${NC}\n" "$MSG_EMAIL"
-  read -rp "  > " INPUT_EMAIL < /dev/tty
-  LE_EMAIL="${INPUT_EMAIL:-}"
-fi
-
 printf "\n  ${BOLD}%s${NC}\n" "$MSG_NODEID"
 read -rp "  > " INPUT_NODEID < /dev/tty
 NODE_ID="${INPUT_NODEID:-node-$(openssl rand -hex 4)}"
@@ -253,73 +226,7 @@ chmod 666 "${PROJECT_DIR}/.env"
 info ".env"
 
 # ═════════════════════════════════════════════════════════════════════
-#  8. Certificate
-# ═════════════════════════════════════════════════════════════════════
-
-USE_SELFSIGNED=false
-
-# Stop containers from a previous run that might hold port 80
-if docker compose ps -q 2>/dev/null | grep -q .; then
-  warn "$MSG_STOP_PREV"
-  docker compose down --remove-orphans < /dev/null 2>/dev/null || true
-fi
-
-if [ -n "$DOMAIN" ]; then
-  if ss -tlnp 2>/dev/null | grep -q ':80 '; then
-    warn "$MSG_PORT80_BUSY"
-    USE_SELFSIGNED=true
-  else
-    step "$MSG_CERT_LE"
-    CERTBOT_ARGS=(certonly --standalone --non-interactive --agree-tos -d "$DOMAIN" --preferred-challenges http)
-    if [ -n "$LE_EMAIL" ]; then
-      CERTBOT_ARGS+=(--email "$LE_EMAIL")
-    else
-      CERTBOT_ARGS+=(--register-unsafely-without-email)
-    fi
-
-    if certbot "${CERTBOT_ARGS[@]}" 2>&1; then
-      LE_DIR="/etc/letsencrypt/live/${DOMAIN}"
-      mkdir -p "${PROJECT_DIR}/deploy/haproxy/certs"
-      cat "${LE_DIR}/fullchain.pem" "${LE_DIR}/privkey.pem" \
-          > "${PROJECT_DIR}/deploy/haproxy/certs/rdp.pem"
-      CERT_PATH="${LE_DIR}/fullchain.pem"
-      KEY_PATH="${LE_DIR}/privkey.pem"
-      info "Let's Encrypt: ${DOMAIN}"
-    else
-      warn "$MSG_CERT_LE_FAIL"
-      USE_SELFSIGNED=true
-    fi
-  fi
-else
-  USE_SELFSIGNED=true
-fi
-
-if [ "$USE_SELFSIGNED" = true ]; then
-  step "$MSG_CERT_SELF"
-  CERT_DIR="${PROJECT_DIR}/deploy/haproxy/certs"
-  mkdir -p "$CERT_DIR"
-
-  openssl req -x509 -newkey rsa:2048 -nodes \
-      -keyout "${CERT_DIR}/rdp.key" \
-      -out "${CERT_DIR}/rdp.crt" \
-      -days 365 \
-      -subj "/CN=rdpproxy-dev/O=RDPProxy/OU=Dev" \
-      2>/dev/null
-  cat "${CERT_DIR}/rdp.crt" "${CERT_DIR}/rdp.key" > "${CERT_DIR}/rdp.pem"
-
-  SELF_LE_DIR="/etc/letsencrypt/live/rdpproxy-dev"
-  mkdir -p "$SELF_LE_DIR"
-  cp "${CERT_DIR}/rdp.crt" "${SELF_LE_DIR}/fullchain.pem"
-  cp "${CERT_DIR}/rdp.key" "${SELF_LE_DIR}/privkey.pem"
-
-  CERT_PATH="${SELF_LE_DIR}/fullchain.pem"
-  KEY_PATH="${SELF_LE_DIR}/privkey.pem"
-  DOMAIN=""
-  info "self-signed → ${CERT_DIR}/rdp.pem"
-fi
-
-# ═════════════════════════════════════════════════════════════════════
-#  9. Generate config.yaml
+#  8. Generate config.yaml
 # ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_WRITE_CONFIG"
@@ -329,13 +236,11 @@ sed \
   -e "s|rdpproxy:CHANGE_ME@postgres|rdpproxy:${DB_PASSWORD}@postgres|" \
   -e "s|password: \"CHANGE_ME\"|password: \"${REDIS_PASSWORD}\"|" \
   -e "s|\"GENERATE_WITH_openssl_rand_hex_32\"|\"${ENCRYPTION_KEY}\"|" \
-  -e "s|cert_path:.*|cert_path: \"${CERT_PATH}\"|" \
-  -e "s|key_path:.*|key_path: \"${KEY_PATH}\"|" \
   "${PROJECT_DIR}/config.yaml.example" > "${PROJECT_DIR}/config.yaml"
 info "config.yaml"
 
 # ═════════════════════════════════════════════════════════════════════
-#  10. Sysctl tuning (BBR + TCP buffers)
+#  9. Sysctl tuning (BBR + TCP buffers)
 # ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_SYSCTL"
@@ -349,7 +254,7 @@ sysctl --system -q 2>/dev/null || sysctl -p /etc/sysctl.d/99-rdpproxy.conf
 info "BBR + TCP buffers"
 
 # ═════════════════════════════════════════════════════════════════════
-#  11. systemd unit
+#  10. systemd unit
 # ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_SYSTEMD"
@@ -370,30 +275,27 @@ ExecStop=/usr/bin/docker compose down
 WantedBy=multi-user.target
 EOF
 
-sed "s|/opt/rdpproxy|${PROJECT_DIR}|g" \
-  "${PROJECT_DIR}/deploy/systemd/rdpproxy-port-watcher.path" \
-  > /etc/systemd/system/rdpproxy-port-watcher.path
-
-sed "s|/opt/rdpproxy|${PROJECT_DIR}|g" \
-  "${PROJECT_DIR}/deploy/systemd/rdpproxy-port-watcher.service" \
-  > /etc/systemd/system/rdpproxy-port-watcher.service
-
 systemctl daemon-reload
 systemctl enable rdpproxy.service
-systemctl enable --now rdpproxy-port-watcher.path
 info "rdpproxy.service"
-info "rdpproxy-port-watcher.path"
 
 # ═════════════════════════════════════════════════════════════════════
-#  12. Build images
+#  11. Build images
 # ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_BUILD"
+
+# Stop containers from a previous run
+if docker compose ps -q 2>/dev/null | grep -q .; then
+  warn "$MSG_STOP_PREV"
+  docker compose down --remove-orphans < /dev/null 2>/dev/null || true
+fi
+
 docker compose build --quiet < /dev/null
 info "docker compose build"
 
 # ═════════════════════════════════════════════════════════════════════
-#  13. Start databases and run migrations BEFORE app services
+#  12. Start minimal stack (postgres + redis + admin)
 # ═════════════════════════════════════════════════════════════════════
 
 wait_healthy() {
@@ -419,30 +321,14 @@ step "$MSG_WAIT_HEALTH"
 wait_healthy postgres 60
 wait_healthy redis 60
 
-step "$MSG_MIGRATE"
-docker compose run --rm -T --no-deps portal python -c "
-from alembic.config import Config
-from alembic import command
-cfg = Config('alembic.ini')
-cfg.set_main_option('sqlalchemy.url', 'postgresql+asyncpg://rdpproxy:${DB_PASSWORD}@postgres:5432/rdpproxy')
-command.upgrade(cfg, 'head')
-"
-info "Alembic → head"
-
-# ═════════════════════════════════════════════════════════════════════
-#  14. Start all services
-# ═════════════════════════════════════════════════════════════════════
-
-step "$MSG_START"
-docker compose up -d < /dev/null
-info "docker compose up -d"
+docker compose up -d admin < /dev/null
+info "admin"
 
 step "$MSG_WAIT_HEALTH"
-wait_healthy portal 120
 wait_healthy admin 120
 
 # ═════════════════════════════════════════════════════════════════════
-#  15. Create admin user
+#  13. Create admin user
 # ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_CREATE_ADMIN"
@@ -475,29 +361,22 @@ rm -f /tmp/_create_admin.py
 info "admin / admin (must_change_password=true)"
 
 # ═════════════════════════════════════════════════════════════════════
-#  16. Summary
+#  14. Summary
 # ═════════════════════════════════════════════════════════════════════
-
-PORTAL_HOST="${DOMAIN:-${LAN_IP}}"
 
 printf "\n${BOLD}══════════════════════════════════════════════════${NC}\n"
 printf "${GREEN}${BOLD}  %s${NC}\n" "$MSG_DONE"
 printf "${BOLD}══════════════════════════════════════════════════${NC}\n\n"
 
 printf "  ${BOLD}%s${NC}\n" "$MSG_ADMIN_URL"
-printf "  → ${CYAN}http://%s:9090/admin/login${NC}\n\n" "$LAN_IP"
-
-printf "  ${BOLD}%s${NC}\n" "$MSG_PORTAL_URL"
-printf "  → ${CYAN}https://%s${NC}\n\n" "$PORTAL_HOST"
+printf "  → ${CYAN}http://%s:9090/admin/settings${NC}\n\n" "$LAN_IP"
 
 printf "  %s\n" "$MSG_CREDS"
 printf "  %s\n\n" "$MSG_CHANGE_PASS"
 
-if [ "$USE_SELFSIGNED" = true ]; then
-  printf "  ${YELLOW}%s${NC}\n" "$MSG_SELFSIGNED_WARN"
-  printf "  %s\n" "$MSG_NEXT_STEP"
-  printf "  %s\n\n" "$MSG_NEXT_STEP_CERT"
-fi
+printf "  %s\n" "$MSG_NEXT_STEP"
+printf "  %s\n" "$MSG_NEXT_STEP2"
+printf "  %s\n\n" "$MSG_NEXT_STEP3"
 
 printf "  %s ${CYAN}%s/.env${NC}\n" "$MSG_SECRETS_AT" "$PROJECT_DIR"
 printf "  %s\n" "$MSG_REBOOT_HINT"

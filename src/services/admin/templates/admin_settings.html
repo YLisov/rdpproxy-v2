@@ -58,10 +58,11 @@
     <p class="hint">Публичный адрес и порт для подключения клиентов. Используются в RDP-файлах, SSL-сертификатах и конфигурации HAProxy. <span class="apply-badge hot">Применяется сразу</span></p>
     <label>Публичный адрес (host) <input id="proxy_public_host" type="text" placeholder="rdp.example.com"></label>
     <p class="hint cert-warn" id="certWarn" style="display:none;color:#92400e;background:#fef3c7;padding:8px 12px;border-radius:6px;margin-top:-8px">
-      При смене домена будет автоматически выпущен новый SSL-сертификат Let's Encrypt. Убедитесь, что DNS для нового домена уже указывает на этот сервер (порт 80 доступен).
+      При смене домена будет запрошен сертификат Let's Encrypt. Убедитесь, что DNS для нового домена уже указывает на этот сервер и порт 80 доступен извне.
     </p>
+    <div id="certProgress" style="display:none;padding:10px 14px;border-radius:6px;margin:-4px 0 12px;font-size:14px"></div>
     <label>Публичный порт <input id="proxy_public_port" type="number" min="1" max="65535" placeholder="443"></label>
-    <p class="hint" style="margin-top:-8px">Порт, на который подключаются клиенты извне. При смене в <code>.env</code> обновляется <code>PUBLIC_PORT</code>, затем контейнер HAProxy пересоздаётся (через cert-manager и Docker; при установке через install.sh дополнительно срабатывает systemd path unit). Задержка несколько секунд.</p>
+    <p class="hint" style="margin-top:-8px">Порт, на который подключаются клиенты извне. После сохранения выполните на сервере: <code>docker compose up -d</code></p>
     <div class="actions"><button type="button" class="save" data-save="general">Сохранить</button></div>
   </div>
 
@@ -261,10 +262,42 @@
 
   let _savedPublicHost = '';
   const certWarn = document.getElementById('certWarn');
+  const certProgress = document.getElementById('certProgress');
   document.getElementById('proxy_public_host').addEventListener('input', () => {
     const cur = document.getElementById('proxy_public_host').value.trim();
     certWarn.style.display = (_savedPublicHost && cur && cur !== _savedPublicHost) ? 'block' : 'none';
   });
+
+  function _pollCertStatus() {
+    certProgress.style.display = 'block';
+    certProgress.style.background = '#eff6ff';
+    certProgress.style.color = '#1e40af';
+    certProgress.textContent = 'Запрос сертификата…';
+    const iv = setInterval(async () => {
+      try {
+        const cs = await api('/api/admin/settings/cert-status');
+        if (cs.status === 'in_progress') {
+          certProgress.textContent = cs.message || 'Запрос сертификата…';
+          return;
+        }
+        clearInterval(iv);
+        if (cs.status === 'success') {
+          certProgress.style.background = '#dcfce7';
+          certProgress.style.color = '#166534';
+          certProgress.innerHTML = cs.message + '<br><strong>Выполните на сервере:</strong> <code>docker compose up -d</code>';
+        } else {
+          certProgress.style.background = '#fef2f2';
+          certProgress.style.color = '#991b1b';
+          certProgress.textContent = cs.message || 'Ошибка получения сертификата';
+        }
+      } catch (e) {
+        clearInterval(iv);
+        certProgress.style.background = '#fef2f2';
+        certProgress.style.color = '#991b1b';
+        certProgress.textContent = e.message;
+      }
+    }, 2000);
+  }
 
   document.querySelectorAll('.save').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -348,7 +381,8 @@
       try {
         await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ values: payloads }) });
         if (hostChanged) {
-          setStatus('Сохранено. Запрошен выпуск SSL-сертификата для нового домена — это может занять до минуты.', 'ok');
+          setStatus('Сохранено. Запрос SSL-сертификата…', 'ok');
+          _pollCertStatus();
         } else {
           setStatus('Сохранено', 'ok');
         }

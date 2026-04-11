@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -16,7 +17,6 @@ from config.loader import AppConfig
 from config.settings_manager import SettingsManager
 from db.engine import create_engine, create_sessionmaker
 from identity.ldap_auth import LDAPAuthenticator
-from redis_store import keys
 from redis_store.client import create_redis_client
 from redis_store.sessions import AdminWebSessionData, SessionStore
 from services.admin.dependencies import ADMIN_COOKIE_NAME, browser_fingerprint, require_admin
@@ -95,6 +95,7 @@ def create_app(config: AppConfig) -> FastAPI:
 
     app.state._prev_public_host: str | None = None
     app.state._prev_public_port: int | None = None
+    app.state.cert_status: dict[str, Any] = {"status": "idle", "message": "", "domain": ""}
 
     def _update_dotenv_port(port: int) -> bool:
         """Update PUBLIC_PORT in the .env file (in-place write). Returns True on success."""
@@ -122,16 +123,33 @@ def create_app(config: AppConfig) -> FastAPI:
             logger.warning("Failed to write PUBLIC_PORT to %s", env_path, exc_info=True)
             return False
 
+    async def _request_certificate(domain: str) -> None:
+        """Background task: request an SSL certificate via ACME."""
+        from acme_client import obtain_certificate
+
+        app.state.cert_status = {"status": "in_progress", "message": "Requesting certificate...", "domain": domain}
+        certs_dir = os.environ.get("CERTS_DIR", "/app/certs")
+        result = await obtain_certificate(domain=domain, email=None, certs_dir=certs_dir)
+        if result.success:
+            app.state.cert_status = {
+                "status": "success",
+                "message": f"Certificate for {domain} obtained. Restart services: docker compose up -d",
+                "domain": domain,
+            }
+        else:
+            app.state.cert_status = {
+                "status": "error",
+                "message": result.message or result.error,
+                "domain": domain,
+            }
+
     async def _on_proxy_change(data: dict[str, Any]) -> None:
         new_host = (data.get("public_host") or "").strip()
         prev = app.state._prev_public_host
         app.state._prev_public_host = new_host
         if new_host and prev and new_host != prev:
             logger.info("public_host changed: %s -> %s, requesting certificate", prev, new_host)
-            try:
-                redis_client.publish(keys.CERT_RENEW_CHANNEL, new_host)
-            except Exception:
-                logger.exception("Failed to publish cert renew signal")
+            asyncio.create_task(_request_certificate(new_host))
 
         new_port = data.get("public_port") or data.get("listen_port")
         if new_port is not None:
@@ -140,11 +158,7 @@ def create_app(config: AppConfig) -> FastAPI:
             app.state._prev_public_port = new_port
             if prev_port is not None and new_port != prev_port:
                 logger.info("public_port changed: %d -> %d, updating .env", prev_port, new_port)
-                if _update_dotenv_port(new_port):
-                    try:
-                        redis_client.publish(keys.HAPROXY_RECREATE_CHANNEL, "1")
-                    except Exception:
-                        logger.exception("Failed to publish HAProxy recreate signal (cert-manager)")
+                _update_dotenv_port(new_port)
 
     settings_mgr.on_change("ldap", _on_ldap_change)
     settings_mgr.on_change("redis_ttl", _on_redis_ttl_change)

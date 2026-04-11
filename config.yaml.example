@@ -21,8 +21,8 @@ security:
   encryption_key: "GENERATE_WITH_openssl_rand_hex_32"
 
 proxy:
-  cert_path: "/etc/letsencrypt/live/rdp.example.com/fullchain.pem"
-  key_path: "/etc/letsencrypt/live/rdp.example.com/privkey.pem"
+  cert_path: "/app/certs/fullchain.pem"
+  key_path: "/app/certs/privkey.pem"
 
 # Bind addresses — change only for non-standard setups
 portal:

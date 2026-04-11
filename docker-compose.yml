@@ -44,7 +44,6 @@ services:
     image: haproxy:2.9-alpine
     ports:
       - "${PUBLIC_PORT:-443}:443"
-      - "${LAN_IP:-0.0.0.0}:9090:9090"
     volumes:
       - ./deploy/haproxy:/usr/local/etc/haproxy:ro
     networks:
@@ -54,8 +53,6 @@ services:
         condition: service_healthy
       rdp-relay:
         condition: service_started
-      admin:
-        condition: service_healthy
     sysctls:
       - net.ipv4.tcp_congestion_control=bbr
     deploy:
@@ -95,7 +92,7 @@ services:
     command: python -m services.rdp_relay.main
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./deploy/haproxy/certs:/app/certs:ro
     group_add:
       - "988"
     networks:
@@ -119,10 +116,13 @@ services:
   admin:
     build: .
     command: python -m services.admin.main
+    ports:
+      - "80:80"
+      - "${LAN_IP:-0.0.0.0}:9090:9090"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./.env:/app/.env
-      - ./src:/app/src:ro
+      - ./deploy/haproxy/certs:/app/certs
     networks:
       - rdpproxy
     depends_on:
@@ -135,7 +135,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     deploy:
       resources:
         limits:
@@ -143,42 +143,11 @@ services:
           cpus: '1.0'
     restart: unless-stopped
 
-  cert-manager:
-    build:
-      context: .
-      dockerfile: deploy/cert-manager/Dockerfile
-    ports:
-      - "80:80"
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./deploy:/app/deploy
-      - ./docker-compose.yml:/app/docker-compose.yml:ro
-      - ./.env:/app/.env
-      - /etc/letsencrypt:/etc/letsencrypt
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      COMPOSE_FILE: /app/docker-compose.yml
-      COMPOSE_PROJECT: rdpproxy
-      HOST_PROJECT_DIR: ${HOST_PROJECT_DIR:-/opt/rdpproxy}
-      CERT_DEST: /app/deploy/haproxy/certs/rdp.pem
-    networks:
-      - rdpproxy
-    depends_on:
-      redis:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: '0.5'
-    restart: unless-stopped
-
   metrics:
     build: .
     command: python -m services.metrics.main
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - ./src:/app/src:ro
       - /proc:/host/proc:ro
     networks:
       - rdpproxy

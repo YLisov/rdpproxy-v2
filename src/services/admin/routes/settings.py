@@ -78,6 +78,15 @@ async def put_settings(
     return {"status": "ok"}
 
 
+@router.get("/cert-status")
+async def cert_status(
+    request: Request,
+    _: AdminWebSessionData = Depends(require_admin),
+) -> dict[str, Any]:
+    """Return the current ACME certificate request status."""
+    return getattr(request.app.state, "cert_status", {"status": "idle", "message": "", "domain": ""})
+
+
 @router.post("/ldap-check")
 async def ldap_check(
     request: Request,

@@ -1645,3 +1645,52 @@ docker compose up -d --build rdp-relay
 **Описание**: Удалены неиспользуемые i18n-строки `MSG_PORT80_CHECK`, `MSG_PORT80_BLOCKED`, `MSG_PORT80_RETRY`, `MSG_PORT80_OK` из обоих языковых блоков (EN/RU). Строка `MSG_PORT80_BUSY` обновлена (убрана инструкция «нажмите Enter»).
 
 **Изменённые файлы**: `deploy/install.sh`
+
+---
+## Итерация #41
+**Запрос**: Встроить ACME в admin, удалить cert-manager, двухэтапная установка
+
+### Действие 41.1
+**Описание**: Удалены файлы cert-manager и port-watcher: `src/services/cert_manager/main.py`, `deploy/cert-manager/Dockerfile`, `deploy/scripts/change-domain.sh`, `deploy/scripts/renew-cert.sh`, `deploy/systemd/rdpproxy-port-watcher.path`, `deploy/systemd/rdpproxy-port-watcher.service`.
+
+### Действие 41.2
+**Описание**: Удалены Redis-каналы `CERT_RENEW_CHANNEL` и `HAPROXY_RECREATE_CHANNEL` из `keys.py`.
+
+### Действие 41.3
+**Описание**: Создан `src/libs/acme_client/` — ACME-клиент + challenge server.
+
+### Действие 41.4
+**Описание**: Добавлены `acme`, `josepy` в `requirements.txt`.
+
+### Действие 41.5
+**Описание**: Auto-migrate в `admin/main.py`.
+
+### Действие 41.6
+**Описание**: `app.py` — ACME вместо Redis pub/sub.
+
+### Действие 41.7
+**Описание**: `GET /api/admin/settings/cert-status`.
+
+### Действие 41.8
+**Описание**: `GET /api/admin/services/health` — TCP/HTTP health-check.
+
+### Действие 41.9
+**Описание**: Виджет статуса сервисов на дашборде.
+
+### Действие 41.10
+**Описание**: `admin_settings.html` — прогресс ACME, инструкции.
+
+### Действие 41.11
+**Описание**: `docker-compose.yml` — удалён cert-manager, порт 80/9090 на admin, certs volume.
+
+### Действие 41.12
+**Описание**: `config.yaml.example` — cert_path обновлён на `/app/certs/`.
+
+### Действие 41.13
+**Описание**: `install.sh` упрощён: без домена/certbot, только postgres+redis+admin.
+
+### Действие 41.14
+**Описание**: `README.md` обновлён.
+
+### Действие 41.15
+**Описание**: Проверка: build OK, двухэтапный запуск OK, все 7 сервисов running.

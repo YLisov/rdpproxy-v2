@@ -26,6 +26,8 @@
   </style>
 {% endblock %}
 {% block content %}
+  <h3 style="margin:0 0 10px;font-size:14px;font-weight:600">Статус сервисов</h3>
+  <div class="grid" id="svcStatus" style="margin-bottom:20px"></div>
   <p class="muted" id="status">Загрузка метрик…</p>
   <div class="grid" id="kpiRoot"></div>
   <div class="toolbar">
@@ -252,7 +254,25 @@
     loadDashboard();
   });
 
+  async function loadServiceHealth() {
+    try {
+      const svcs = await api('/api/admin/services/health');
+      document.getElementById('svcStatus').innerHTML = svcs.map(s => {
+        const color = s.status === 'running' ? '#16a34a' : s.status === 'unhealthy' ? '#d97706' : '#94a3b8';
+        const dot = s.status === 'running' ? '\u25cf' : '\u25cb';
+        const label = s.status === 'running' ? 'Running' : s.status === 'unhealthy' ? 'Unhealthy' : 'Stopped';
+        const lat = s.latency_ms > 0 ? s.latency_ms + ' ms' : '';
+        return `<div class="kpi" style="min-height:60px;padding:12px 14px">
+          <h3 style="margin:0 0 4px">${esc(s.name)}</h3>
+          <div style="font-size:14px;font-weight:600;color:${color}">${dot} ${label}</div>
+          ${lat ? '<div class="sub" style="padding-top:2px">' + lat + '</div>' : ''}
+        </div>`;
+      }).join('');
+    } catch (e) {}
+  }
+
+  loadServiceHealth();
   loadDashboard();
-  setInterval(loadDashboard, 5000);
+  setInterval(() => { loadServiceHealth(); loadDashboard(); }, 5000);
 </script>
 {% endblock %}

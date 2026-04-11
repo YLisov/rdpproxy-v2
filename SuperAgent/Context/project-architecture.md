@@ -3,10 +3,9 @@
 ## 1) Архитектурный обзор
 
 `RDPProxy` построен как набор изолированных сервисов в Docker, объединенных bridge-сетью `rdpproxy`.
-Единственная внешняя точка входа — контейнер `haproxy`, который:
-- принимает весь публичный трафик на `443`;
-- делит RDP и HTTPS на L4-уровне;
-- проксирует админ-панель на `9090` только через LAN интерфейс.
+Внешние точки входа:
+- контейнер `haproxy`, который принимает весь публичный трафик на `443`, делит RDP и HTTPS на L4-уровне;
+- контейнер `admin`, который обслуживает админ-панель на `9090` (LAN) и ACME HTTP-01 challenge на порту `80`.
 
 Ключевая цель архитектуры: масштабируемость, наблюдаемость и расширяемость.
 
@@ -20,7 +19,10 @@ Internet Client
    │                       └── RDP   ► RDP Relay :8002 (L4, Proxy Protocol v2)
    │
 LAN Admin
-   └── HTTP ─────────────► HAProxy :9090 ► Admin :9090
+   └── HTTP ─────────────► Admin :9090 (напрямую, без HAProxy)
+
+ACME HTTP-01
+   └── HTTP :80 ──────────► Admin (challenge server)
 
 Portal/Admin/Relay/Metrics ───► PostgreSQL
 Portal/Admin/Relay/Metrics ───► Redis
@@ -73,7 +75,7 @@ RDP Relay ─────────────────────► Tar
   - `AdminUser`, `AdminAuditLog`
   - `ClusterNode` (состояние нод кластера)
 - `db/migrations/*`: Alembic environment и миграции.
-- `redis_store/keys.py`: централизованные Redis-ключи, паттерны и TTL для всего приложения. Включает `CONN_TOKEN` — маппинг connection_id→token для удаления токена при admin kill.
+- `redis_store/keys.py`: централизованные Redis-ключи, паттерны и TTL для всего приложения. Включает `CONN_TOKEN` — маппинг connection_id→token для удаления токена при admin kill. Удалены устаревшие каналы `CERT_RENEW_CHANNEL` и `HAPROXY_RECREATE_CHANNEL` (сертификаты теперь получаются через встроенный ACME-клиент в admin).
 - `redis_store/client.py`: фабрика Redis-клиента.
 - `redis_store/sessions.py`: web/admin/rdp session lifecycle + fingerprint checks. Атомарные WATCH/pipeline для TOCTOU-безопасности. `AdminWebSessionData` содержит `allowed_ips`.
 - `redis_store/encryption.py`: AES-256-GCM helper.
@@ -127,17 +129,20 @@ RDP Relay ─────────────────────► Tar
 - `settings.py` полностью переписан для работы через `SettingsManager`: GET читает из менеджера, PUT сохраняет через менеджер с publish в Redis pub/sub. Добавлен endpoint `POST /ldap-test` для проверки LDAP с несохраненными параметрами.
 - `admin_settings.html` расширен 8 вкладками: Общие, LDAP, DNS, Безопасность, Сессии, RDP Relay (max_connections, idle_timeout, max_session_duration), Администраторы. У каждой группы — цветная метка "Применяется сразу" (зеленая) или "Требует перезапуска" (оранжевая).
 
+- `acme_client/`: встроенный ACME-клиент для получения сертификатов Let's Encrypt. `client.py` — основная логика (регистрация аккаунта, заказ сертификата, HTTP-01 challenge, сохранение fullchain.pem/privkey.pem/rdp.pem). `challenge_server.py` — минимальный asyncio HTTP-сервер на порту 80 для ответа на ACME challenge. Сертификаты хранятся в `deploy/haproxy/certs/`.
+
 #### Admin (`services/admin`)
-- `app.py`: app factory + HTML endpoints. Интегрирован `SettingsManager` с хуками горячей перезагрузки для LDAP, Redis TTL и Portal name. LDAP authenticator создается из DB-настроек при старте.
+- `main.py`: entry point, автоматически выполняет `alembic upgrade head` перед запуском uvicorn.
+- `app.py`: app factory + HTML endpoints. Интегрирован `SettingsManager` с хуками горячей перезагрузки для LDAP, Redis TTL и Portal name. LDAP authenticator создается из DB-настроек при старте. При смене домена (`_on_proxy_change`) запускает ACME-запрос сертификата через `asyncio.create_task`. Состояние запроса доступно через `app.state.cert_status`.
 - `routes/auth.py`: admin login/logout/change password.
 - `routes/servers.py`, `templates.py`: CRUD серверов и шаблонов.
 - `routes/sessions.py`: активные/исторические сессии, kill. Модель `QualityDetail` (rtt_ms, rtt_var_ms, jitter_ms, retransmits, total_retrans, lost, cwnd, rating) и поле `quality_detail` в `ActiveSessionOut` — данные парсятся из Redis для эндпоинта `GET /api/admin/sessions/active`. При admin kill (`kill_session`, `kill_all_sessions`) помимо установки kill-флага также удаляется RDP-токен из Redis через маппинг `CONN_TOKEN`, чтобы клиент не мог авто-переподключиться.
 - `routes/admin_users.py`: управление локальными админ-аккаунтами.
 - `routes/ad_groups.py`: резолвинг/обновление AD-групп.
-- `routes/settings.py`: системные настройки.
+- `routes/settings.py`: системные настройки + `GET /api/admin/settings/cert-status` — статус ACME-запроса сертификата.
 - `routes/stats.py`: агрегированные метрики.
 - `routes/cluster.py`: обзор нод.
-- `routes/services_mgmt.py`: статус сервисов.
+- `routes/services_mgmt.py`: статус сервисов + `GET /api/admin/services/health` — TCP/HTTP health-check всех сервисов (postgres, redis, portal, rdp-relay, haproxy, metrics) с latency.
 - `middleware/audit.py`: аудит мутаций API.
 
 #### RDP Relay (`services/rdp_relay`)
@@ -174,16 +179,17 @@ RDP Relay ─────────────────────► Tar
 
 - `haproxy/haproxy.cfg`: ingress правила. Секция `resolvers docker` (127.0.0.11) + `resolvers docker init-addr libc,none` на серверах `portal`/`admin`/`rdp-relay` — пересоздание контейнеров не оставляет HAProxy со старым IP (иначе 503). Frontend `ft_mux`: `timeout client 24h` для long-lived RDP; backend `bk_rdp`: `timeout tunnel 24h`, `timeout server 24h`.
 - `haproxy/certs/rdp.pem`: runtime cert bundle (не коммитится).
-- `install.sh`: двуязычный (EN/RU) скрипт-установщик для развёртывания на чистом apt-based Linux. Выполняет: apt update/upgrade, установку Docker (скрипт get.docker.com сохраняется во временный файл, затем выполняется — без `curl|sh`), клон репо, интерактивную настройку (домен, node-id, пароли), генерацию секретов, выпуск сертификата (Let's Encrypt через прямой вызов certbot standalone, либо self-signed при ошибке или занятом порте 80; проверка только локальной занятости порта через `ss -tlnp`, без curl-проверки через домен — совместимо с NAT без hairpin), sysctl-тюнинг, создание systemd-юнита, сборку и запуск контейнеров, Alembic-миграции, создание admin-пользователя (отдельный Python-файл в контейнере + `DB_PASSWORD` в env).
+- `install.sh`: двуязычный (EN/RU) скрипт-установщик для развёртывания на чистом apt-based Linux. Двухэтапная установка: скрипт устанавливает Docker, клонирует репо, спрашивает node-id и пароли (без домена/email), генерирует `.env` и `config.yaml`, собирает образы, запускает только postgres+redis+admin. Миграции выполняются автоматически при старте admin. Настройка домена и SSL — через админку (этап 2). Удалены: certbot, port-watcher systemd units.
 - `scripts/gen-dev-cert.sh`: dev-сертификат.
 - `scripts/pg-backup.sh`: backup PostgreSQL.
-- `scripts/renew-cert.sh`: сборка LE cert bundle + reload haproxy + restart rdp-relay. Домен определяется из БД (`portal_settings.proxy.public_host`), можно передать аргументом.
-- `scripts/change-domain.sh`: выпуск нового LE-сертификата для указанного домена через certbot standalone + сборка pem + reload. Используется сервисом `cert-manager`.
-- `cert-manager/Dockerfile`: образ sidecar-сервиса cert-manager (python + certbot + docker CLI).
 
-### 3.5 Сервис cert-manager (`services/cert_manager`)
-- `main.py`: sidecar-процесс, подписан на Redis pub/sub: `rdp:cert:renew` (домен → `change-domain.sh`) и `rdp:haproxy:recreate` (пересоздание контейнера `haproxy` через `docker compose --project-directory $HOST_PROJECT_DIR --no-deps --force-recreate up -d haproxy` с `--env-file /app/.env`, чтобы применить новый `PUBLIC_PORT`). `--project-directory` указывает хостовый каталог проекта для корректного разрешения относительных bind-mount путей Docker daemon-ом. `--no-deps` исключает пересоздание зависимых контейнеров (admin/portal/relay). Graceful shutdown по SIGTERM/SIGINT. Автоматический реконнект к Redis при потере связи.
-- Контейнер `cert-manager` в `docker-compose.yml`: порт 80 для certbot HTTP-01 challenge, монтирует `/etc/letsencrypt`, `/var/run/docker.sock`, `./deploy`, `./.env`, `docker-compose.yml`, конфиги. Переменная окружения `HOST_PROJECT_DIR` передаёт хостовый путь проекта (по умолчанию `/opt/rdpproxy`).
+### 3.5 ACME-клиент (встроен в admin)
+Функциональность бывшего `cert-manager` перенесена в admin-сервис:
+- Модуль `src/libs/acme_client/` реализует получение сертификатов Let's Encrypt через pip-пакет `acme`.
+- Порт 80 смонтирован на контейнер `admin` для HTTP-01 challenge.
+- При смене домена в настройках admin автоматически запрашивает сертификат.
+- Сертификаты сохраняются в `deploy/haproxy/certs/` (volume, доступен admin, haproxy, rdp-relay).
+- Удалены: сервис `cert-manager`, его Dockerfile, скрипты `change-domain.sh` и `renew-cert.sh`, systemd port-watcher units, Docker socket mount.
 
 ## 4) Схема зависимостей между модулями
 
@@ -218,10 +224,10 @@ services.metrics
   ├── libs.db.models.node + engine
   └── libs.redis_store.client
 
-services.cert_manager
-  ├── libs.config
-  ├── libs.common.logging
-  └── libs.redis_store.keys
+libs.acme_client
+  ├── acme (pip package)
+  ├── josepy (pip package)
+  └── cryptography
 ```
 
 ## 5) Потоки данных (детально)
@@ -280,7 +286,7 @@ services.cert_manager
 
 ## 8) Операционные риски и known pitfalls
 
-- Сервисы `admin` и `metrics` в `docker-compose.yml` монтируют `./src:/app/src:ro` — правки шаблонов и кода видны после пересоздания контейнера; без тома нужен `docker compose build` после каждой правки UI.
+- Правки кода видны после `docker compose build` + пересоздания контейнера.
 - Неверный LDAP endpoint/credential в `config.yaml` вызывает login fail (частый кейс).
 - Если HAProxy стартует раньше сервисов, может временно дать `503`; лечится health checks/restart.
 - HSTS + неправильный сертификат блокируют доступ к порталу в браузере.

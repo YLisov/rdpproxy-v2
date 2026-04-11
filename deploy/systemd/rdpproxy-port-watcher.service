@@ -1,9 +1,0 @@
-[Unit]
-Description=Recreate HAProxy container after PUBLIC_PORT change (RDPProxy)
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-WorkingDirectory=/opt/rdpproxy
-ExecStart=/usr/bin/docker compose up -d --no-build haproxy
