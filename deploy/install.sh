@@ -41,7 +41,6 @@ setup_i18n() {
       MSG_UNSUPPORTED_OS="Поддерживаются только дистрибутивы с apt (Ubuntu, Debian)."
       MSG_UPDATE_SYS="Обновление системных пакетов..."
       MSG_UPDATE_LIST="Обновление списка пакетов..."
-      MSG_UPGRADE="Обновление установленных пакетов..."
       MSG_INSTALL_DEPS="Установка зависимостей..."
       MSG_INSTALL_DOCKER="Установка Docker..."
       MSG_DOCKER_OK="Docker уже установлен"
@@ -84,7 +83,6 @@ setup_i18n() {
       MSG_UNSUPPORTED_OS="Only apt-based distros (Ubuntu, Debian) are supported."
       MSG_UPDATE_SYS="Updating system packages..."
       MSG_UPDATE_LIST="Updating package lists..."
-      MSG_UPGRADE="Upgrading installed packages..."
       MSG_INSTALL_DEPS="Installing dependencies..."
       MSG_INSTALL_DOCKER="Installing Docker..."
       MSG_DOCKER_OK="Docker is already installed"
@@ -162,8 +160,6 @@ step "$MSG_UPDATE_SYS"
 export DEBIAN_FRONTEND=noninteractive
 info "$MSG_UPDATE_LIST"
 apt-get update -y -qq < /dev/null
-info "$MSG_UPGRADE"
-apt-get upgrade -y -qq < /dev/null
 
 # ═════════════════════════════════════════════════════════════════════
 #  4. Install dependencies
