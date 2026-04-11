@@ -86,7 +86,7 @@ RDP Relay ─────────────────────► Tar
 - `security/passwords.py`: Argon2 хэширование.
 - `security/csrf.py`: CSRF-защита.
 - `security/login_limiter.py`: унифицированный rate-limiter для portal и admin логинов (класс `LoginLimiter` + фабрики `portal_limiter`/`admin_limiter`).
-- `common/*`: structured logging, health helpers, async DNS resolver.
+- `common/*`: structured JSON logging (FD2Handler for uvicorn compatibility), health helpers, async DNS resolver.
 
 ### 3.3 Сервисы (`src/services`)
 
@@ -312,3 +312,10 @@ libs.acme_client
 ## 11) Debug runtime observations
 
 - `rdp-relay` запускается из docker image (код не смонтирован как bind-mount), поэтому изменения Python-кода для диагностики требуют `docker compose up -d --build rdp-relay`.
+
+## 12) Автоматическое управление сертификатами (ACME)
+
+- **HAProxy hot reload**: после выпуска/обновления сертификата `admin` обращается к HAProxy Runtime API через Unix-socket `/var/run/haproxy/admin.sock` (shared bind mount `./deploy/haproxy/run`). Двухфазная команда: `set ssl cert ... <<` → `commit ssl cert`. Нет рестарта, нет downtime. Реализовано в `src/libs/acme_client/haproxy_reload.py`.
+- **rdp-relay**: `_make_tls_context()` вызывается на каждое новое RDP-соединение — новый сертификат подхватывается автоматически без рестарта.
+- **Авторенью**: фоновая задача `_cert_renewal_loop()` в `admin/app.py` каждые 12 часов проверяет `fullchain.pem`; если остаётся < 30 дней — инициирует ACME-выпуск.
+- **Startup-проверка**: через 60 сек после старта admin-сервис проверяет сертификат; если он скоро истекает — обновляет автоматически.

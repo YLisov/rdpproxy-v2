@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -126,14 +128,29 @@ def create_app(config: AppConfig) -> FastAPI:
     async def _request_certificate(domain: str) -> None:
         """Background task: request an SSL certificate via ACME."""
         from acme_client import obtain_certificate
+        from acme_client.haproxy_reload import hot_update_ssl_cert
 
         app.state.cert_status = {"status": "in_progress", "message": "Requesting certificate...", "domain": domain}
         certs_dir = os.environ.get("CERTS_DIR", "/app/certs")
         result = await obtain_certificate(domain=domain, email=None, certs_dir=certs_dir)
         if result.success:
+            haproxy_msg = ""
+            haproxy_socket = os.environ.get("HAPROXY_SOCKET", "/var/run/haproxy/admin.sock")
+            try:
+                with open(result.haproxy_pem_path, "rb") as _f:
+                    pem_bytes = _f.read()
+                reloaded = await hot_update_ssl_cert(pem_bytes, socket_path=haproxy_socket)
+                if reloaded:
+                    haproxy_msg = " HAProxy обновлён автоматически."
+                    logger.info("HAProxy SSL hot-updated after certificate renewal for %s", domain)
+                else:
+                    haproxy_msg = " Выполните: docker compose restart haproxy"
+            except Exception:
+                logger.warning("Could not hot-update HAProxy SSL cert", exc_info=True)
+                haproxy_msg = " Выполните: docker compose restart haproxy"
             app.state.cert_status = {
                 "status": "success",
-                "message": f"Certificate for {domain} obtained. Restart services: docker compose restart haproxy rdp-relay",
+                "message": f"Certificate for {domain} obtained.{haproxy_msg}",
                 "domain": domain,
             }
         else:
@@ -142,6 +159,33 @@ def create_app(config: AppConfig) -> FastAPI:
                 "message": result.message or result.error,
                 "domain": domain,
             }
+
+    async def _cert_renewal_loop() -> None:
+        """Background task: auto-renew the TLS certificate 30 days before expiry."""
+        while True:
+            await asyncio.sleep(12 * 3600)
+            try:
+                domain = (app.state._prev_public_host or "").strip()
+                if not domain:
+                    continue
+                certs_dir = os.environ.get("CERTS_DIR", "/app/certs")
+                from acme_client import cert_days_remaining
+                days = cert_days_remaining(certs_dir)
+                if days is None:
+                    logger.info("Cert renewal loop: no certificate found for %s, requesting", domain)
+                    await _request_certificate(domain)
+                elif days < 30:
+                    logger.info(
+                        "Cert renewal loop: certificate for %s expires in %d days, renewing",
+                        domain, days,
+                    )
+                    await _request_certificate(domain)
+                else:
+                    logger.debug("Cert renewal loop: certificate for %s valid for %d more days", domain, days)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Cert renewal loop error")
 
     async def _on_proxy_change(data: dict[str, Any]) -> None:
         new_host = (data.get("public_host") or "").strip()
@@ -194,8 +238,33 @@ def create_app(config: AppConfig) -> FastAPI:
         app.state._prev_public_port = proxy.get("public_port") or proxy.get("listen_port")
         if app.state._prev_public_port is not None:
             app.state._prev_public_port = int(app.state._prev_public_port)
-        logger.info("Admin service settings loaded from DB (public_host=%s, public_port=%s)",
-                     app.state._prev_public_host, app.state._prev_public_port)
+        os.write(2, json.dumps({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "level": "INFO", "logger": "rdpproxy.admin",
+            "msg": f"Settings loaded (public_host={app.state._prev_public_host}, public_port={app.state._prev_public_port})",
+            "service": "admin",
+        }, ensure_ascii=False).encode() + b"\n")
+        app.state._renewal_task = asyncio.create_task(_cert_renewal_loop())
+
+        async def _startup_cert_check() -> None:
+            await asyncio.sleep(60)
+            try:
+                domain = (app.state._prev_public_host or "").strip()
+                if not domain:
+                    return
+                certs_dir = os.environ.get("CERTS_DIR", "/app/certs")
+                from acme_client import cert_days_remaining
+                days = cert_days_remaining(certs_dir)
+                if days is not None and days < 30:
+                    logger.info(
+                        "Startup cert check: certificate for %s expires in %d days, renewing",
+                        domain, days,
+                    )
+                    await _request_certificate(domain)
+            except Exception:
+                logger.exception("Startup certificate check error")
+
+        asyncio.create_task(_startup_cert_check())
 
     app.add_middleware(AuditMiddleware)
     app.add_middleware(CsrfMiddleware)
@@ -223,6 +292,13 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @app.on_event("shutdown")
     async def _cleanup() -> None:
+        task = getattr(app.state, "_renewal_task", None)
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         if app.state.db_engine:
             await app.state.db_engine.dispose()
 

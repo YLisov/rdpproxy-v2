@@ -55,14 +55,13 @@
     <label>Наименование портала
       <input id="portal_name" type="text" maxlength="128" placeholder="RDP-Proxy">
     </label>
-    <p class="hint">Публичный адрес и порт для подключения клиентов. Используются в RDP-файлах, SSL-сертификатах и конфигурации HAProxy. <span class="apply-badge hot">Применяется сразу</span></p>
+    <p class="hint">Публичный адрес и порт для подключения клиентов. Используются в RDP-файлах, SSL-сертификатах и конфигурации HAProxy.</p>
     <label>Публичный адрес (host) <input id="proxy_public_host" type="text" placeholder="rdp.example.com"></label>
     <p class="hint cert-warn" id="certWarn" style="display:none;color:#92400e;background:#fef3c7;padding:8px 12px;border-radius:6px;margin-top:-8px">
       При смене домена будет запрошен сертификат Let's Encrypt. Убедитесь, что DNS для нового домена уже указывает на этот сервер и порт 80 доступен извне.
     </p>
     <div id="certProgress" style="display:none;padding:10px 14px;border-radius:6px;margin:-4px 0 12px;font-size:14px"></div>
     <label>Публичный порт <input id="proxy_public_port" type="number" min="1" max="65535" placeholder="443"></label>
-    <p class="hint" style="margin-top:-8px">Порт, на который подключаются клиенты извне. После сохранения выполните на сервере: <code>docker compose up -d</code></p>
     <div class="actions"><button type="button" class="save" data-save="general">Сохранить</button></div>
   </div>
 
@@ -222,6 +221,7 @@
     document.getElementById('proxy_public_host').value = P.public_host || '';
     document.getElementById('proxy_public_port').value = P.public_port != null ? P.public_port : (P.listen_port != null ? P.listen_port : '');
     _savedPublicHost = P.public_host || '';
+    _savedPublicPort = P.public_port != null ? P.public_port : (P.listen_port != null ? P.listen_port : '');
 
     const D = settings.dns || {};
     document.getElementById('dns_servers').value = (D.servers || []).join('\n');
@@ -261,6 +261,7 @@
   }
 
   let _savedPublicHost = '';
+  let _savedPublicPort = '';
   const certWarn = document.getElementById('certWarn');
   const certProgress = document.getElementById('certProgress');
   document.getElementById('proxy_public_host').addEventListener('input', () => {
@@ -284,7 +285,7 @@
         if (cs.status === 'success') {
           certProgress.style.background = '#dcfce7';
           certProgress.style.color = '#166534';
-          certProgress.innerHTML = cs.message + '<br><strong>Выполните на сервере:</strong> <code>docker compose restart haproxy rdp-relay</code>';
+          certProgress.innerHTML = cs.message;
         } else {
           certProgress.style.background = '#fef2f2';
           certProgress.style.color = '#991b1b';
@@ -307,6 +308,10 @@
         _savedPublicHost &&
         document.getElementById('proxy_public_host').value.trim() &&
         document.getElementById('proxy_public_host').value.trim() !== _savedPublicHost;
+      const portChanged = key === 'general' &&
+        String(_savedPublicPort) &&
+        document.getElementById('proxy_public_port').value &&
+        String(document.getElementById('proxy_public_port').value) !== String(_savedPublicPort);
       if (key === 'general') {
         payloads = {
           portal: { name: document.getElementById('portal_name').value.trim() || 'RDP-Proxy' },
@@ -383,6 +388,13 @@
         if (hostChanged) {
           setStatus('Сохранено. Запрос SSL-сертификата…', 'ok');
           _pollCertStatus();
+        } else if (portChanged) {
+          setStatus('Сохранено', 'ok');
+          const newPort = document.getElementById('proxy_public_port').value;
+          certProgress.style.display = 'block';
+          certProgress.style.background = '#fef3c7';
+          certProgress.style.color = '#92400e';
+          certProgress.innerHTML = 'Порт изменён на <strong>' + newPort + '</strong>. Для применения выполните на сервере:<br><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">docker compose up -d --force-recreate haproxy</code>';
         } else {
           setStatus('Сохранено', 'ok');
         }

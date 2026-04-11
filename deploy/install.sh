@@ -307,6 +307,11 @@ chown -R "${CERT_UID}:${CERT_UID}" "${PROJECT_DIR}/deploy/haproxy/certs"
 chmod -R u+rwX "${PROJECT_DIR}/deploy/haproxy/certs"
 info "deploy/haproxy/certs (uid ${CERT_UID})"
 
+# HAProxy Runtime API socket directory (world-writable so haproxy container can create the socket)
+mkdir -p "${PROJECT_DIR}/deploy/haproxy/run"
+chmod 777 "${PROJECT_DIR}/deploy/haproxy/run"
+info "deploy/haproxy/run (mode 777 for haproxy socket)"
+
 # ═════════════════════════════════════════════════════════════════════
 #  12. Start minimal stack (postgres + redis + admin)
 # ═════════════════════════════════════════════════════════════════════

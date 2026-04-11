@@ -39,6 +39,7 @@ def main() -> None:
         host=config.admin.host,
         port=config.admin.port,
         log_level="warning",
+        log_config=None,
         access_log=False,
     )
 

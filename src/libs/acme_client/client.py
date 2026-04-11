@@ -180,6 +180,28 @@ async def _set_challenge(server: ChallengeServer, token: str, key_authz: str) ->
     server.set_token(token, key_authz)
 
 
+def cert_days_remaining(certs_dir: str) -> int | None:
+    """Return the number of days until the certificate in *certs_dir* expires.
+
+    Returns ``None`` when the certificate file is missing or cannot be parsed.
+    """
+    fullchain_path = os.path.join(certs_dir, "fullchain.pem")
+    try:
+        with open(fullchain_path, "rb") as f:
+            cert = x509.load_pem_x509_certificate(f.read())
+        now = datetime.datetime.now(datetime.timezone.utc)
+        delta = cert.not_valid_after_utc - now
+        return delta.days
+    except Exception:
+        return None
+
+
+def cert_needs_renewal(certs_dir: str, renew_before_days: int = 30) -> bool:
+    """Return True when the certificate is missing, expired, or expires within *renew_before_days* days."""
+    days = cert_days_remaining(certs_dir)
+    return days is None or days < renew_before_days
+
+
 async def obtain_certificate(
     domain: str,
     email: str | None,

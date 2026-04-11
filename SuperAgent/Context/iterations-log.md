@@ -1820,3 +1820,102 @@ docker compose up -d --build rdp-relay
 **Описание**: В `app.py` (`cert_status` success) и в `admin_settings.html` (дополнительная строка в блоке успеха сертификата) текст заменён на `docker compose restart haproxy rdp-relay`. В README (раздел SSL) добавлено пояснение. Обновлены `project-architecture.md` (ACME) и `iterations-log.md`.
 
 **Изменённые файлы**: `src/services/admin/app.py`, `src/services/admin/templates/admin_settings.html`, `README.md`, `SuperAgent/Context/project-architecture.md`, `SuperAgent/Context/iterations-log.md`
+
+---
+## Итерация #52
+**Запрос**: Автоматический перезапуск HAProxy после выпуска/обновления сертификата + авторенью сертификата.
+
+### Действие 52.1
+**Описание**: Добавлен `stats socket /var/run/haproxy/admin.sock mode 666 level admin expose-fd listeners` в секцию `global` файла `deploy/haproxy/haproxy.cfg`. Это открывает HAProxy Runtime API для hot-reload сертификатов без рестарта.
+
+### Действие 52.2
+**Описание**: В `docker-compose.yml` добавлен bind mount `./deploy/haproxy/run:/var/run/haproxy` для сервисов `haproxy` (rw, создаёт socket) и `admin` (rw, читает socket). Создана директория `deploy/haproxy/run/` с `.gitkeep`.
+
+### Действие 52.3
+**Описание**: Создан новый модуль `src/libs/acme_client/haproxy_reload.py` — асинхронный клиент HAProxy Runtime API. Функция `hot_update_ssl_cert(pem_content, socket_path, haproxy_cert_path)` выполняет двухфазное обновление: `set ssl cert ... <<` (staging), затем `commit ssl cert` (атомарное применение). Нет рестарта, нет downtime.
+
+### Действие 52.4
+**Описание**: В `src/libs/acme_client/client.py` добавлены функции `cert_days_remaining(certs_dir) -> int | None` (дней до истечения сертификата по `fullchain.pem`) и `cert_needs_renewal(certs_dir, renew_before_days=30) -> bool`. Экспортированы через `__init__.py`.
+
+### Действие 52.5
+**Описание**: В `src/services/admin/app.py` реализованы:
+- В `_request_certificate()`: после успешного выпуска читается `rdp.pem` и вызывается `hot_update_ssl_cert()`. Сообщение: «HAProxy обновлён автоматически» или «Выполните: docker compose restart haproxy» (если сокет недоступен).
+- `_cert_renewal_loop()` — фоновая coroutine, цикл каждые 12 часов, проверяет `cert_days_remaining`, при `< 30` дней вызывает `_request_certificate(domain)`.
+- `_startup_cert_check()` — однократная проверка через 60 секунд после старта, инициирует авторенью если осталось < 30 дней.
+- Оба таска запускаются в `_load_settings` (startup event). `_renewal_task` отменяется при shutdown.
+
+### Действие 52.6
+**Описание**: В `admin_settings.html` убрана жёстко прошитая инструкция `docker compose restart haproxy rdp-relay` — теперь сообщение полностью приходит из `cs.message` (backend), которое динамически содержит либо «HAProxy обновлён автоматически», либо инструкцию по рестарту.
+
+**Изменённые файлы**: `deploy/haproxy/haproxy.cfg`, `docker-compose.yml`, `deploy/haproxy/run/.gitkeep` (new), `src/libs/acme_client/haproxy_reload.py` (new), `src/libs/acme_client/client.py`, `src/libs/acme_client/__init__.py`, `src/services/admin/app.py`, `src/services/admin/templates/admin_settings.html`
+
+---
+## Итерация #53
+**Запрос**: HAProxy не стартует — Permission denied на создание Unix socket.
+
+### Действие 53.1
+**Описание**: Исправлены права директории `deploy/haproxy/run/`: `chmod 777` на хосте — HAProxy внутри Alpine-контейнера работает под uid 99, директория принадлежала root с правами 755. После chmod socket `admin.sock` создался успешно, HAProxy поднялся.
+
+### Действие 53.2
+**Изменённые файлы**: `deploy/install.sh`
+
+---
+## Итерация #54
+**Запрос**: HAProxy не обновляется при смене домена через hot reload.
+
+### Действие 54.1
+**Описание**: Выяснена причина провала `commit ssl cert`: файл `rdp.pem` содержит пустую строку между блоками сертификатов (строка 22 между end-entity cert и intermediate CA). HAProxy парсит heredoc-payload до первой пустой строки → в транзакцию попадал только первый сертификат без ключа → commit отклонял: "must contain at least a certificate and a private key".
+
+### Действие 54.2
+**Описание**: Полностью переписан `src/libs/acme_client/haproxy_reload.py`:
+- Добавлена функция `_strip_blank_lines(pem)` — убирает все пустые строки из PEM-контента перед отправкой.
+- Синхронный `_send_command_sync` через `socket.SHUT_WR` (half-close) вместо asyncio. `SHUT_WR` необходим для сигнала конца heredoc (аналог EOF). Запускается через `loop.run_in_executor()` чтобы не блокировать event loop.
+- Перед `set ssl cert` выполняется `abort ssl cert` для сброса любой зависшей транзакции.
+- Проверка успеха SET: `"Transaction created"` или `"Transaction updated"`.
+- Проверка успеха COMMIT: `"Success"` или `"New"`.
+- Верифицировано вручную: `SET → Transaction created, COMMIT → Success!`
+
+**Изменённые файлы**: `src/libs/acme_client/haproxy_reload.py`
+
+---
+## Итерация #55
+**Время начала**: 2026-04-11 18:00
+**Запрос**: Диагностика и исправление проблемы: логи admin-сервиса не видны через docker logs (uvicorn перехватывает stderr)
+
+### Действие 55.1
+**Описание**: Обнаружено что uvicorn при инициализации перехватывает sys.stderr, из-за чего StreamHandler в Python logging перестаёт выводить логи в docker logs. Диагностика: `logger.info()` вызывается, root logger настроен правильно (level=20, handler есть), но вывод пропадает.
+
+### Действие 55.2
+**Описание**: Создан `FD2Handler` в `src/libs/common/logging.py` — кастомный logging handler который пишет напрямую в file descriptor 2 через `os.write(2, ...)`, полностью минуя sys.stderr. Это обходит перехват uvicorn.
+
+**Изменённые файлы**: `src/libs/common/logging.py`
+
+### Действие 55.3
+**Описание**: Добавлен `log_config=None` в `uvicorn.run()` в `main.py` чтобы uvicorn не сбрасывал конфигурацию logging при старте.
+
+**Изменённые файлы**: `src/services/admin/main.py`
+
+### Действие 55.4
+**Описание**: В `_load_settings()` startup event добавлен прямой `os.write(2, ...)` для вывода JSON-лога о загруженных настройках, так как `logger.info()` в startup context uvicorn не работает. Убран весь диагностический debug-код.
+
+**Изменённые файлы**: `src/services/admin/app.py`
+
+### Действие 55.5
+**Описание**: Верифицировано в production: смена домена `rdp123.lisov.pro → rdp.lisov.pro` — сертификат выпущен Let's Encrypt, HAProxy hot-reload через Runtime API прошёл автоматически без перезапуска. Сообщение в UI: "Certificate for rdp.lisov.pro obtained. HAProxy обновлён автоматически."
+
+**Результат**: Полная цепочка автоматического обновления сертификатов работает:
+1. Пользователь меняет домен в админке
+2. `_on_proxy_change` → `_request_certificate`
+3. Let's Encrypt выпускает сертификат
+4. `hot_update_ssl_cert` обновляет HAProxy через Runtime API
+5. HAProxy начинает обслуживать новый сертификат без рестарта
+
+---
+## Итерация #56
+**Время начала**: 2026-04-11 18:57
+**Запрос**: При смене порта в админке показывать инструкцию для применения изменений в HAProxy
+
+### Действие 56.1
+**Описание**: Добавлено отслеживание изменения публичного порта в UI (`_savedPublicPort`). При сохранении с изменённым портом показывается жёлтый баннер с инструкцией: `docker compose up -d --force-recreate haproxy`. Порт нельзя обновить hot-reload'ом — он задан в docker-compose.yml через `${PUBLIC_PORT}`, поэтому требуется пересоздание контейнера.
+
+**Изменённые файлы**: `src/services/admin/templates/admin_settings.html`

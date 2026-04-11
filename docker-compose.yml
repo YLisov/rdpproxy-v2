@@ -46,6 +46,7 @@ services:
       - "${PUBLIC_PORT:-443}:443"
     volumes:
       - ./deploy/haproxy:/usr/local/etc/haproxy:ro
+      - ./deploy/haproxy/run:/var/run/haproxy
     networks:
       - rdpproxy
     depends_on:
@@ -123,6 +124,7 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       - ./.env:/app/.env
       - ./deploy/haproxy/certs:/app/certs
+      - ./deploy/haproxy/run:/var/run/haproxy
     networks:
       - rdpproxy
     depends_on:

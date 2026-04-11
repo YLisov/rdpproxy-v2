@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 
@@ -28,13 +29,27 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False)
 
 
+class FD2Handler(logging.Handler):
+    """Logging handler that writes directly to file descriptor 2 (stderr).
+
+    Bypasses sys.stderr entirely to avoid issues with uvicorn replacing it.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record) + "\n"
+            os.write(2, msg.encode("utf-8", errors="replace"))
+        except Exception:
+            self.handleError(record)
+
+
 def setup_logging(*, level: str = "INFO", service: str = "rdpproxy") -> None:
-    """Configure root logger with JSON formatter on stderr."""
+    """Configure root logger with JSON formatter writing directly to FD 2."""
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
     for h in root.handlers[:]:
         root.removeHandler(h)
-    handler = logging.StreamHandler(sys.stderr)
+    handler = FD2Handler()
     handler.setFormatter(JSONFormatter())
     root.addHandler(handler)
     old_factory = logging.getLogRecordFactory()
