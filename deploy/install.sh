@@ -47,6 +47,8 @@ setup_i18n() {
       MSG_DOCKER_OK="Docker уже установлен"
       MSG_CLONE="Клонирование репозитория..."
       MSG_CLONE_EXISTS="Репозиторий уже существует, работаем на месте"
+      MSG_FETCH="Загрузка конфигурационных файлов..."
+      MSG_FETCH_EXISTS="Конфигурационные файлы уже существуют, работаем на месте"
       MSG_DIALOG_HEADER="Настройка параметров"
       MSG_NODEID="Node ID (Enter — сгенерировать случайный):"
       MSG_DBPASS="Пароль базы данных (Enter — сгенерировать):"
@@ -88,6 +90,8 @@ setup_i18n() {
       MSG_DOCKER_OK="Docker is already installed"
       MSG_CLONE="Cloning repository..."
       MSG_CLONE_EXISTS="Repository already present, using local copy"
+      MSG_FETCH="Downloading configuration files..."
+      MSG_FETCH_EXISTS="Configuration files already present, using local copy"
       MSG_DIALOG_HEADER="Configuration"
       MSG_NODEID="Node ID (Enter to generate random):"
       MSG_DBPASS="Database password (Enter to generate):"
@@ -166,8 +170,13 @@ apt-get upgrade -y -qq < /dev/null
 # ═════════════════════════════════════════════════════════════════════
 
 step "$MSG_INSTALL_DEPS"
-apt-get install -y -qq git curl openssl ca-certificates < /dev/null >/dev/null
-info "git, curl, openssl"
+if [ "$USE_IMAGE" = true ]; then
+  apt-get install -y -qq curl openssl ca-certificates < /dev/null >/dev/null
+  info "curl, openssl"
+else
+  apt-get install -y -qq git curl openssl ca-certificates < /dev/null >/dev/null
+  info "git, curl, openssl"
+fi
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   info "$MSG_DOCKER_OK ($(docker --version | cut -d' ' -f3 | tr -d ','))"
@@ -181,21 +190,42 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════
-#  5. Get source code
+#  5. Get required files
 # ═════════════════════════════════════════════════════════════════════
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "${SCRIPT_DIR}/../docker-compose.yml" ]; then
-  PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-  info "$MSG_CLONE_EXISTS ($PROJECT_DIR)"
-elif [ -f "${INSTALL_DIR}/docker-compose.yml" ]; then
-  PROJECT_DIR="${INSTALL_DIR}"
-  info "$MSG_CLONE_EXISTS ($PROJECT_DIR)"
+
+if [ "$USE_IMAGE" = true ]; then
+  # Image mode: only fetch docker-compose.yml + deploy/haproxy + example configs
+  if [ -f "${INSTALL_DIR}/docker-compose.yml" ]; then
+    PROJECT_DIR="${INSTALL_DIR}"
+    info "$MSG_FETCH_EXISTS ($PROJECT_DIR)"
+  else
+    step "$MSG_FETCH"
+    mkdir -p "${INSTALL_DIR}/deploy/haproxy"
+    ARCHIVE_URL="https://github.com/YLisov/rdpproxy/archive/refs/heads/main.tar.gz"
+    curl -fsSL "$ARCHIVE_URL" | tar -xz --strip-components=1 -C "${INSTALL_DIR}" \
+      rdpproxy-main/docker-compose.yml \
+      rdpproxy-main/config.yaml.example \
+      rdpproxy-main/.env.example \
+      rdpproxy-main/deploy/haproxy/haproxy.cfg < /dev/null
+    PROJECT_DIR="${INSTALL_DIR}"
+    info "$PROJECT_DIR"
+  fi
 else
-  step "$MSG_CLONE"
-  git clone "$REPO_URL" "$INSTALL_DIR" < /dev/null
-  PROJECT_DIR="$INSTALL_DIR"
-  info "$PROJECT_DIR"
+  # Build mode: full git clone needed for Dockerfile, src/, etc.
+  if [ -f "${SCRIPT_DIR}/../docker-compose.dev.yml" ]; then
+    PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    info "$MSG_CLONE_EXISTS ($PROJECT_DIR)"
+  elif [ -f "${INSTALL_DIR}/docker-compose.dev.yml" ]; then
+    PROJECT_DIR="${INSTALL_DIR}"
+    info "$MSG_CLONE_EXISTS ($PROJECT_DIR)"
+  else
+    step "$MSG_CLONE"
+    git clone "$REPO_URL" "$INSTALL_DIR" < /dev/null
+    PROJECT_DIR="$INSTALL_DIR"
+    info "$PROJECT_DIR"
+  fi
 fi
 
 cd "$PROJECT_DIR"
