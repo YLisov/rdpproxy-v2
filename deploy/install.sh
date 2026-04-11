@@ -49,6 +49,7 @@ setup_i18n() {
       MSG_SYSCTL="Настройка параметров ядра (TCP/BBR)..."
       MSG_SYSTEMD="Создание systemd-юнита..."
       MSG_BUILD="Сборка Docker-образов..."
+      MSG_CERTS_DIR="Каталог сертификатов (права для ACME в admin)..."
       MSG_START="Запуск сервисов..."
       MSG_WAIT_HEALTH="Ожидание готовности сервисов..."
       MSG_CREATE_ADMIN="Создание администратора (admin/admin)..."
@@ -88,6 +89,7 @@ setup_i18n() {
       MSG_SYSCTL="Configuring kernel parameters (TCP/BBR)..."
       MSG_SYSTEMD="Creating systemd unit..."
       MSG_BUILD="Building Docker images..."
+      MSG_CERTS_DIR="TLS certificate directory (permissions for ACME in admin)..."
       MSG_START="Starting services..."
       MSG_WAIT_HEALTH="Waiting for services to become healthy..."
       MSG_CREATE_ADMIN="Creating admin user (admin/admin)..."
@@ -295,6 +297,17 @@ docker compose build --quiet < /dev/null
 info "docker compose build"
 
 # ═════════════════════════════════════════════════════════════════════
+#  11b. Certificate directory: admin runs as non-root (appuser), must own /app/certs mount
+# ═════════════════════════════════════════════════════════════════════
+
+step "$MSG_CERTS_DIR"
+mkdir -p "${PROJECT_DIR}/deploy/haproxy/certs"
+CERT_UID="$(docker compose run --rm --no-deps -T admin id -u < /dev/null)"
+chown -R "${CERT_UID}:${CERT_UID}" "${PROJECT_DIR}/deploy/haproxy/certs"
+chmod -R u+rwX "${PROJECT_DIR}/deploy/haproxy/certs"
+info "deploy/haproxy/certs (uid ${CERT_UID})"
+
+# ═════════════════════════════════════════════════════════════════════
 #  12. Start minimal stack (postgres + redis + admin)
 # ═════════════════════════════════════════════════════════════════════
 
@@ -321,8 +334,8 @@ step "$MSG_WAIT_HEALTH"
 wait_healthy postgres 60
 wait_healthy redis 60
 
-docker compose up -d admin < /dev/null
-info "admin"
+docker compose up -d admin metrics < /dev/null
+info "admin + metrics"
 
 step "$MSG_WAIT_HEALTH"
 wait_healthy admin 120

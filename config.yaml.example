@@ -41,12 +41,10 @@ admin:
 rdp_relay:
   host: "0.0.0.0"
   port: 8002
-  # Networks trusted to send Proxy Protocol v2 headers.
-  # Empty list = Proxy Protocol headers ignored, direct peer IP used.
-  # trusted_proxies:
-  #   - "10.0.0.0/8"
-  #   - "172.16.0.0/12"
-  #   - "127.0.0.0/8"
+  # HAProxy sends PROXY v2; the peer is on the Docker bridge (172.16.0.0–172.31.255.255).
+  # If this is empty, the PROXY header is not stripped and RDP through HAProxy fails.
+  trusted_proxies:
+    - "172.16.0.0/12"
 
 # ── Optional: LDAP / DNS / etc. can still be set here for initial seed ──
 # If present, values are migrated to the database on first startup and

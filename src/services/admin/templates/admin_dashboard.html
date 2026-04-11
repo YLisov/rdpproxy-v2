@@ -26,8 +26,6 @@
   </style>
 {% endblock %}
 {% block content %}
-  <h3 style="margin:0 0 10px;font-size:14px;font-weight:600">Статус сервисов</h3>
-  <div class="grid" id="svcStatus" style="margin-bottom:20px"></div>
   <p class="muted" id="status">Загрузка метрик…</p>
   <div class="grid" id="kpiRoot"></div>
   <div class="toolbar">
@@ -37,8 +35,8 @@
     <button type="button" class="pill" data-period="24h">24 часа</button>
     <span class="sep"></span>
     <span class="muted" style="margin-right:4px">Шкала:</span>
-    <button type="button" class="pill active" id="scaleFixed">Фиксированная</button>
-    <button type="button" class="pill" id="scaleDynamic">Динамическая</button>
+    <button type="button" class="pill" id="scaleFixed">Фиксированная</button>
+    <button type="button" class="pill active" id="scaleDynamic">Динамическая</button>
   </div>
   <div class="charts-grid">
     <div class="chart-card"><h3>Загрузка CPU</h3><canvas id="cpuChart"></canvas></div>
@@ -51,8 +49,19 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script>
   let currentPeriod = '1h';
-  let fixedScale = true;
+  function getCookie(name) {
+    const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function setCookie(name, val) {
+    document.cookie = name + '=' + encodeURIComponent(val) + ';path=/;max-age=31536000;SameSite=Lax';
+  }
+  let fixedScale = getCookie('dash_scale') === 'fixed';
   const charts = {};
+  (function initScaleUI() {
+    document.getElementById('scaleFixed').classList.toggle('active', fixedScale);
+    document.getElementById('scaleDynamic').classList.toggle('active', !fixedScale);
+  })();
 
   async function api(url) {
     const r = await fetch(url);
@@ -195,6 +204,10 @@
           <div class="net-row"><span class="dir">↑</span><span class="net-val">${fmtBps(L.net_bytes_sent_sec)}</span></div>
           <div class="sub">Входящий / Исходящий</div>
         </div>
+        <div class="kpi" id="svcKpi" style="min-height:auto;padding:12px 14px">
+          <h3>Сервисы</h3>
+          <div id="svcRows" style="font-size:12px"></div>
+        </div>
       `;
 
       const pts = (res.points || []).slice().reverse();
@@ -243,36 +256,38 @@
 
   document.getElementById('scaleFixed').addEventListener('click', () => {
     fixedScale = true;
+    setCookie('dash_scale', 'fixed');
     document.getElementById('scaleFixed').classList.add('active');
     document.getElementById('scaleDynamic').classList.remove('active');
     loadDashboard();
   });
   document.getElementById('scaleDynamic').addEventListener('click', () => {
     fixedScale = false;
+    setCookie('dash_scale', 'dynamic');
     document.getElementById('scaleDynamic').classList.add('active');
     document.getElementById('scaleFixed').classList.remove('active');
     loadDashboard();
   });
 
   async function loadServiceHealth() {
+    const el = document.getElementById('svcRows');
+    if (!el) return;
     try {
       const svcs = await api('/api/admin/services/health');
-      document.getElementById('svcStatus').innerHTML = svcs.map(s => {
-        const color = s.status === 'running' ? '#16a34a' : s.status === 'unhealthy' ? '#d97706' : '#94a3b8';
-        const dot = s.status === 'running' ? '\u25cf' : '\u25cb';
-        const label = s.status === 'running' ? 'Running' : s.status === 'unhealthy' ? 'Unhealthy' : 'Stopped';
-        const lat = s.latency_ms > 0 ? s.latency_ms + ' ms' : '';
-        return `<div class="kpi" style="min-height:60px;padding:12px 14px">
-          <h3 style="margin:0 0 4px">${esc(s.name)}</h3>
-          <div style="font-size:14px;font-weight:600;color:${color}">${dot} ${label}</div>
-          ${lat ? '<div class="sub" style="padding-top:2px">' + lat + '</div>' : ''}
+      el.innerHTML = svcs.map((s, i) => {
+        const ok = s.status === 'running';
+        const warn = s.status === 'unhealthy';
+        const color = ok ? '#16a34a' : warn ? '#d97706' : '#dc2626';
+        const dot = ok ? '\u25cf' : '\u25cb';
+        return `<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 0">
+          <span>${esc(s.name)}</span>
+          <span style="font-weight:600;color:${color}">${dot}</span>
         </div>`;
       }).join('');
     } catch (e) {}
   }
 
-  loadServiceHealth();
-  loadDashboard();
-  setInterval(() => { loadServiceHealth(); loadDashboard(); }, 5000);
+  loadDashboard().then(() => loadServiceHealth());
+  setInterval(() => { loadDashboard().then(() => loadServiceHealth()); }, 5000);
 </script>
 {% endblock %}

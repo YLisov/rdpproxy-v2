@@ -24,7 +24,7 @@ _SERVICE_CHECKS: list[dict[str, Any]] = [
     {"name": "portal", "type": "http", "host": "portal", "port": 8001, "path": "/health"},
     {"name": "rdp-relay", "type": "tcp", "host": "rdp-relay", "port": 8002},
     {"name": "haproxy", "type": "tcp", "host": "haproxy", "port": 443},
-    {"name": "metrics", "type": "tcp", "host": "metrics", "port": 9200},
+    {"name": "metrics", "type": "redis_heartbeat"},
 ]
 
 
@@ -57,10 +57,26 @@ async def _check_http(host: str, port: int, path: str, timeout: float = 2.0) -> 
         return "stopped", 0
 
 
-async def _check_one(spec: dict[str, Any]) -> dict[str, Any]:
+def _check_redis_heartbeat(request_or_rc: Any) -> tuple[str, float]:
+    """Check if metrics collector recently wrote a heartbeat to Redis."""
+    rc = request_or_rc
+    try:
+        for k in rc.scan_iter(match="rdp:heartbeat:*", count=10):
+            ttl = rc.ttl(k)
+            if ttl > 0:
+                return "running", 0
+        return "stopped", 0
+    except Exception:
+        return "stopped", 0
+
+
+async def _check_one(spec: dict[str, Any], redis_client: Any = None) -> dict[str, Any]:
     stype = spec["type"]
     if stype == "self":
         return {"name": spec["name"], "status": "running", "latency_ms": 0}
+    if stype == "redis_heartbeat":
+        status, latency = _check_redis_heartbeat(redis_client)
+        return {"name": spec["name"], "status": status, "latency_ms": latency}
     if stype == "http":
         status, latency = await _check_http(spec["host"], spec["port"], spec.get("path", "/"))
     else:
@@ -69,9 +85,13 @@ async def _check_one(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/health")
-async def service_health(_: AdminWebSessionData = Depends(require_admin)) -> list[dict[str, Any]]:
+async def service_health(
+    request: Request,
+    _: AdminWebSessionData = Depends(require_admin),
+) -> list[dict[str, Any]]:
     """Check reachability of all services via TCP/HTTP probes."""
-    results = await asyncio.gather(*[_check_one(s) for s in _SERVICE_CHECKS])
+    rc = get_redis_client(request)
+    results = await asyncio.gather(*[_check_one(s, redis_client=rc) for s in _SERVICE_CHECKS])
     return list(results)
 
 

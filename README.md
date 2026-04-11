@@ -129,6 +129,7 @@ docker compose up -d
 | `redis.password`               | Пароль Redis (согласован с `.env`)       |
 | `security.encryption_key`      | Ключ шифрования (`openssl rand -hex 32`) |
 | `proxy.cert_path` / `key_path` | Пути к сертификату и ключу (заполняются автоматически при получении через админку) |
+| `rdp_relay.trusted_proxies`    | Сети, с которых принимается PROXY v2 от HAProxy; в шаблоне задано `172.16.0.0/12` (типичный Docker bridge) |
 
 
 ### Основные настройки — админ-панель
@@ -156,7 +157,9 @@ LDAP, DNS, таймауты сессий, параметры прокси и rel
 2. Admin-сервис запросит сертификат через HTTP-01 challenge (порт **80** должен быть доступен).
 3. Сертификаты сохраняются в `deploy/haproxy/certs/` и используются HAProxy и RDP Relay.
 
-Для обновления сертификата достаточно повторно сохранить домен в настройках.
+Установщик `install.sh` после сборки образов выставляет владельца `deploy/haproxy/certs` под UID пользователя `appuser` в контейнере admin (иначе ACME не сможет записать `account.key` и сертификаты). При ручной установке, если видите `Permission denied` на `/app/certs`, выполните: `UID=$(docker compose run --rm --no-deps admin id -u)` и `sudo chown -R "$UID:$UID" deploy/haproxy/certs`.
+
+Для обновления сертификата достаточно повторно сохранить домен в настройках. После успешной выдачи выполните `docker compose restart haproxy rdp-relay`, чтобы HAProxy подхватил новый `rdp.pem`, а relay — актуальные `fullchain.pem` / `privkey.pem`.
 
 ## Управление сервисом
 

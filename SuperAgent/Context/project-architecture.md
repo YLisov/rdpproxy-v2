@@ -147,7 +147,7 @@ RDP Relay ─────────────────────► Tar
 
 #### RDP Relay (`services/rdp_relay`)
 - `main.py`: TCP listener и graceful shutdown. Интегрирован `SettingsManager` с фоновой задачей `_settings_listener` (Redis pub/sub). DNS resolver и настройки handler обновляются на лету.
-- `handler.py`: полный lifecycle одной RDP-сессии. Динамические параметры (token_fingerprint_enforce, delete_token_on_disconnect, ldap.domain) читаются из `SettingsManager`. Proxy Protocol v2 всегда включён (хардкод). Методы `update_dns()` и `update_settings()` для горячей подмены. При старте сессии сохраняет маппинг connection_id→token в Redis (`CONN_TOKEN`). После завершения реле определяет реальную причину (`admin_kill` / `idle_timeout` / `normal`) по анализу `result.legs` и наличию kill-ключа. Опционально удаляет токен при завершении если включена настройка `delete_token_on_disconnect`.
+- `handler.py`: полный lifecycle одной RDP-сессии. Динамические параметры (token_fingerprint_enforce, delete_token_on_disconnect, ldap.domain) читаются из `SettingsManager`. PROXY v2 читается с соединения только если `rdp_relay.proxy_protocol` и IP пира входит в `rdp_relay.trusted_proxies` (`config.yaml`); иначе заголовок не снимается и RDP через HAProxy (`send-proxy-v2`) ломается. В `config.yaml.example` по умолчанию задано `172.16.0.0/12` (типичный Docker bridge). Методы `update_dns()` и `update_settings()` для горячей подмены. При старте сессии сохраняет маппинг connection_id→token в Redis (`CONN_TOKEN`). После завершения реле определяет реальную причину (`admin_kill` / `idle_timeout` / `normal`) по анализу `result.legs` и наличию kill-ключа. Опционально удаляет токен при завершении если включена настройка `delete_token_on_disconnect`.
   - optional PPv2 read
   - token extraction + `extract_requested_protocols` из X.224 CR клиента
   - X.224 confirm
@@ -179,7 +179,7 @@ RDP Relay ─────────────────────► Tar
 
 - `haproxy/haproxy.cfg`: ingress правила. Секция `resolvers docker` (127.0.0.11) + `resolvers docker init-addr libc,none` на серверах `portal`/`admin`/`rdp-relay` — пересоздание контейнеров не оставляет HAProxy со старым IP (иначе 503). Frontend `ft_mux`: `timeout client 24h` для long-lived RDP; backend `bk_rdp`: `timeout tunnel 24h`, `timeout server 24h`.
 - `haproxy/certs/rdp.pem`: runtime cert bundle (не коммитится).
-- `install.sh`: двуязычный (EN/RU) скрипт-установщик для развёртывания на чистом apt-based Linux. Двухэтапная установка: скрипт устанавливает Docker, клонирует репо, спрашивает node-id и пароли (без домена/email), генерирует `.env` и `config.yaml`, собирает образы, запускает только postgres+redis+admin. Миграции выполняются автоматически при старте admin. Настройка домена и SSL — через админку (этап 2). Удалены: certbot, port-watcher systemd units.
+- `install.sh`: двуязычный (EN/RU) скрипт-установщик для развёртывания на чистом apt-based Linux. Двухэтапная установка: скрипт устанавливает Docker, клонирует репо, спрашивает node-id и пароли (без домена/email), генерирует `.env` и `config.yaml`, собирает образы, после `docker compose build` создаёт `deploy/haproxy/certs` и выполняет `chown -R` на UID пользователя `appuser` из контейнера admin (запись ACME в `/app/certs` под не-root). Затем запускает только postgres+redis+admin. Миграции выполняются автоматически при старте admin. Настройка домена и SSL — через админку (этап 2). Удалены: certbot, port-watcher systemd units.
 - `scripts/gen-dev-cert.sh`: dev-сертификат.
 - `scripts/pg-backup.sh`: backup PostgreSQL.
 
@@ -189,6 +189,7 @@ RDP Relay ─────────────────────► Tar
 - Порт 80 смонтирован на контейнер `admin` для HTTP-01 challenge.
 - При смене домена в настройках admin автоматически запрашивает сертификат.
 - Сертификаты сохраняются в `deploy/haproxy/certs/` (volume, доступен admin, haproxy, rdp-relay).
+- После успешной выдачи в UI показывается команда `docker compose restart haproxy rdp-relay` — HAProxy перечитывает `rdp.pem` (TLS портала), relay — `fullchain.pem`/`privkey.pem` из того же каталога.
 - Удалены: сервис `cert-manager`, его Dockerfile, скрипты `change-domain.sh` и `renew-cert.sh`, systemd port-watcher units, Docker socket mount.
 
 ## 4) Схема зависимостей между модулями

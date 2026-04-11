@@ -133,7 +133,7 @@ def create_app(config: AppConfig) -> FastAPI:
         if result.success:
             app.state.cert_status = {
                 "status": "success",
-                "message": f"Certificate for {domain} obtained. Restart services: docker compose up -d",
+                "message": f"Certificate for {domain} obtained. Restart services: docker compose restart haproxy rdp-relay",
                 "domain": domain,
             }
         else:

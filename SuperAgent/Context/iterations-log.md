@@ -1694,3 +1694,129 @@ docker compose up -d --build rdp-relay
 
 ### Действие 41.15
 **Описание**: Проверка: build OK, двухэтапный запуск OK, все 7 сервисов running.
+
+---
+## Итерация #42
+**Запрос**: `trusted_proxies` для HAProxy PROXY v2; новые установки; перезапуск relay.
+
+### Действие 42.1
+**Описание**: В `config.yaml.example` и рабочий `config.yaml` добавлено `rdp_relay.trusted_proxies: [172.16.0.0/12]` — снятие PROXY v2 с Docker bridge; без этого RDP через HAProxy давал Invalid TPKT / IncompleteRead.
+
+### Действие 42.2
+**Описание**: README — строка в таблице стартовой конфигурации про `trusted_proxies`.
+
+### Действие 42.3
+**Описание**: Обновлён `SuperAgent/Context/project-architecture.md` (handler + trusted_proxies).
+
+**Изменённые файлы**: `config.yaml.example`, `config.yaml`, `README.md`, `SuperAgent/Context/project-architecture.md`, `SuperAgent/Context/iterations-log.md`
+
+---
+## Итерация #43
+**Запрос**: Исправить Permission denied на `/app/certs/account.key` на сервере и в установщике.
+
+### Действие 43.1
+**Описание**: На сервере: `chown -R 999:999` и `chmod -R u+rwX` на `deploy/haproxy/certs` (UID `appuser` в образе admin).
+
+### Действие 43.2
+**Описание**: В `deploy/install.sh` после `docker compose build`: шаг `MSG_CERTS_DIR` — `mkdir -p`, `CERT_UID=$(docker compose run --rm --no-deps -T admin id -u)`, `chown -R` / `chmod -R` на каталог сертификатов.
+
+### Действие 43.3
+**Описание**: README (SSL) — про выставление владельца и команда для ручной установки.
+
+**Изменённые файлы**: `deploy/install.sh`, `README.md`, `SuperAgent/Context/project-architecture.md`, `SuperAgent/Context/iterations-log.md` (на хосте также права на `deploy/haproxy/certs`)
+
+---
+## Итерация #44
+**Запрос**: Исправить ошибку ACME `MalformedFraming` при смене домена.
+
+### Действие 44.1
+**Описание**: Найдена корневая причина: `_generate_domain_key_and_csr()` возвращала CSR в формате DER (`serialization.Encoding.DER`), а библиотека `acme` в методе `ClientV2.new_order()` ожидает PEM. Исправлено на `serialization.Encoding.PEM`; переименованы переменные `csr_der` → `csr_pem` по всему flow.
+
+### Действие 44.2
+**Описание**: Добавлена устойчивость к повреждённым ключам в `_load_or_create_account_key()`: обёрнут `load_pem_private_key` в `try/except (ValueError, TypeError)` — при невалидном PEM ключ логируется и пересоздаётся вместо аварийного завершения.
+
+### Действие 44.3
+**Описание**: Пересобран и перезапущен контейнер admin — стартует без ошибок.
+
+**Изменённые файлы**: `src/libs/acme_client/client.py`, `SuperAgent/Context/iterations-log.md`
+
+---
+## Итерация #45
+**Запрос**: Повторная ошибка ACME — `ConflictError` при `new_account()`.
+
+### Действие 45.1
+**Описание**: Ошибка `acme.errors.ConflictError` — аккаунт с данным ключом уже зарегистрирован в Let's Encrypt, повторный вызов `new_account()` отклоняется. Добавлена обработка: `try/except ConflictError` → `acme.query_registration()` берёт существующий аккаунт по URI из заголовка `Location`. Также добавлен импорт `errors as acme_errors`.
+
+**Изменённые файлы**: `src/libs/acme_client/client.py`, `SuperAgent/Context/iterations-log.md`
+
+---
+## Итерация #46
+**Запрос**: Ошибка ACME `'NoneType' object has no attribute 'update'` при `query_registration()`.
+
+### Действие 46.1
+**Описание**: `RegistrationResource(uri=exc.location)` создавался с `body=None`, а библиотека acme вызывает `regr.body.update(only_return_existing=True)` — отсюда `AttributeError`. Исправлено: передаётся `body=messages.Registration()` — пустой, но валидный объект регистрации с методом `update`.
+
+**Изменённые файлы**: `src/libs/acme_client/client.py`, `SuperAgent/Context/iterations-log.md`
+
+---
+## Итерация #47
+**Запрос**: Ошибка ACME `'Order' object has no attribute 'identifier'` — полная переработка ACME flow.
+
+### Действие 47.1
+**Описание**: Проведён аудит всех методов библиотеки `acme 3.3.0` через `inspect.getsource()` внутри контейнера: `new_order`, `poll`, `finalize_order`, `poll_and_finalize`, `poll_authorizations`, `begin_finalization`, `poll_finalization`, `answer_challenge`. Выявлено, что `poll()` ожидает `AuthorizationResource` (не `OrderResource`), а `finalize_order` ожидает `datetime.datetime` deadline (не `time.monotonic`).
+
+### Действие 47.2
+**Описание**: Полностью переписан ACME flow в `_obtain_sync()`:
+- Удалён ручной цикл `acme.poll(order)` + `acme.finalize_order()` с неправильными типами
+- Заменён на `acme.poll_and_finalize(order, deadline)` — один вызов, который корректно поллит авторизации и финализирует заказ
+- Deadline — `datetime.datetime.now() + timedelta(seconds=180)` вместо `time.monotonic()`
+- Добавлена обработка `ValidationError` (с выводом failed authzrs) и `TimeoutError`
+- Добавлен импорт `datetime`
+- Проведена верификация всех 8 API-паттернов внутри контейнера — все проверки пройдены
+
+**Изменённые файлы**: `src/libs/acme_client/client.py`, `SuperAgent/Context/iterations-log.md`
+
+---
+## Итерация #48
+**Запрос**: RDP обрывает подключение после получения сертификата.
+
+### Действие 48.1
+**Описание**: В логах rdp-relay: `FileNotFoundError: No such file or directory` при `ctx.load_cert_chain()`. В `config.yaml` оставались старые пути certbot: `cert_path: "/etc/letsencrypt/live/rdp.lisov.pro/fullchain.pem"`. ACME-клиент пишет в `/app/certs/`, который примонтирован в rdp-relay. Исправлено: `cert_path: "/app/certs/fullchain.pem"`, `key_path: "/app/certs/privkey.pem"` (как в config.yaml.example). Перезапущен rdp-relay — стартует без ошибок.
+
+**Изменённые файлы**: `config.yaml`, `SuperAgent/Context/iterations-log.md`
+
+---
+## Итерация #49
+**Запрос**: Три улучшения: metrics показывает Stopped (хотя работает), metrics не запускается при установке, виджеты статусов занимают много места.
+
+### Действие 49.1
+**Описание**: Metrics не слушает порт, но health check пытался TCP-подключение к порту 9200. Изменён тип проверки metrics с `tcp:9200` на `redis_heartbeat` — проверяет наличие ключа `rdp:heartbeat:*` с TTL > 0 в Redis. Добавлена функция `_check_redis_heartbeat()`, обновлён `_check_one()` для нового типа, endpoint `/health` теперь передаёт redis_client в проверки.
+
+### Действие 49.2
+**Описание**: Виджеты статусов сервисов заменены с отдельных карточек (grid) на единый компактный виджет-список: один блок с заголовком «Сервисы», каждый сервис — строка с именем, статусом (dot + label) и latency.
+
+### Действие 49.3
+**Описание**: В `deploy/install.sh` строка запуска admin дополнена: `docker compose up -d admin metrics` — метрики доступны в админке сразу после установки.
+
+**Изменённые файлы**: `src/services/admin/routes/services_mgmt.py`, `src/services/admin/templates/admin_dashboard.html`, `deploy/install.sh`, `SuperAgent/Context/iterations-log.md`
+
+---
+## Итерация #50
+**Запрос**: Виджет сервисов компактнее, переместить в KPI-сетку после «Сеть»; шкала графиков по умолчанию — динамическая; настройка шкалы сохраняется в cookie.
+
+### Действие 50.1
+**Описание**: Виджет сервисов перемещён из отдельного блока над KPI в ячейку KPI-сетки (после «Сеть»). Формат — компактные строки: имя + цветная точка, без label/latency текста, font-size 12px, padding 2px. Рендерится вместе с остальными KPI в `loadDashboard()`, `loadServiceHealth()` проверяет наличие `#svcRows` через guard.
+
+### Действие 50.2
+**Описание**: Шкала графиков по умолчанию изменена на динамическую (`fixedScale = false`). Инициализация: чтение cookie `dash_scale` — если `fixed` то фиксированная, иначе динамическая. При нажатии кнопок шкалы — `setCookie('dash_scale', ...)` с `max-age=31536000` (1 год). UI кнопки синхронизируются при загрузке через IIFE `initScaleUI()`.
+
+**Изменённые файлы**: `src/services/admin/templates/admin_dashboard.html`, `SuperAgent/Context/iterations-log.md`
+
+---
+## Итерация #51
+**Запрос**: Сообщение после ACME — вместо `docker compose up -d` указать `docker compose restart haproxy rdp-relay`.
+
+### Действие 51.1
+**Описание**: В `app.py` (`cert_status` success) и в `admin_settings.html` (дополнительная строка в блоке успеха сертификата) текст заменён на `docker compose restart haproxy rdp-relay`. В README (раздел SSL) добавлено пояснение. Обновлены `project-architecture.md` (ACME) и `iterations-log.md`.
+
+**Изменённые файлы**: `src/services/admin/app.py`, `src/services/admin/templates/admin_settings.html`, `README.md`, `SuperAgent/Context/project-architecture.md`, `SuperAgent/Context/iterations-log.md`

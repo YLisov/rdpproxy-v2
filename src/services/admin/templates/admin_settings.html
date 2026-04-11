@@ -284,7 +284,7 @@
         if (cs.status === 'success') {
           certProgress.style.background = '#dcfce7';
           certProgress.style.color = '#166534';
-          certProgress.innerHTML = cs.message + '<br><strong>Выполните на сервере:</strong> <code>docker compose up -d</code>';
+          certProgress.innerHTML = cs.message + '<br><strong>Выполните на сервере:</strong> <code>docker compose restart haproxy rdp-relay</code>';
         } else {
           certProgress.style.background = '#fef2f2';
           certProgress.style.color = '#991b1b';

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import os
 import time
@@ -10,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import josepy as jose
-from acme import challenges, client as acme_client, messages
+from acme import challenges, client as acme_client, errors as acme_errors, messages
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography import x509
@@ -39,9 +40,12 @@ class CertResult:
 def _load_or_create_account_key(path: str) -> jose.JWKRSA:
     """Load existing account key or generate a new RSA-2048 one."""
     if os.path.exists(path):
-        with open(path, "rb") as f:
-            key = serialization.load_pem_private_key(f.read(), password=None)
-        return jose.JWKRSA(key=key)
+        try:
+            with open(path, "rb") as f:
+                key = serialization.load_pem_private_key(f.read(), password=None)
+            return jose.JWKRSA(key=key)
+        except (ValueError, TypeError) as exc:
+            logger.warning("Corrupt account key at %s (%s), regenerating", path, exc)
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     pem = key.private_bytes(
@@ -68,8 +72,8 @@ def _generate_domain_key_and_csr(domain: str) -> tuple[bytes, bytes]:
         .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domain)]))
         .sign(key, SHA256())
     )
-    csr_der = csr.public_bytes(serialization.Encoding.DER)
-    return key_pem, csr_der
+    csr_pem = csr.public_bytes(serialization.Encoding.PEM)
+    return key_pem, csr_pem
 
 
 def _obtain_sync(
@@ -89,21 +93,31 @@ def _obtain_sync(
     directory = messages.Directory.from_json(net.get(acme_directory).json())
     acme = acme_client.ClientV2(directory, net=net)
 
-    regr = acme.new_account(
-        messages.NewRegistration.from_data(
-            email=email or None,
-            terms_of_service_agreed=True,
+    try:
+        regr = acme.new_account(
+            messages.NewRegistration.from_data(
+                email=email or None,
+                terms_of_service_agreed=True,
+            )
         )
-    )
-    logger.info("ACME account registered/found: %s", regr.uri)
+    except acme_errors.ConflictError as exc:
+        regr = acme.query_registration(
+            messages.RegistrationResource(
+                uri=exc.location,
+                body=messages.Registration(),
+            )
+        )
+        logger.info("Using existing ACME account: %s", regr.uri)
+    else:
+        logger.info("ACME account registered: %s", regr.uri)
 
-    domain_key_pem, csr_der = _generate_domain_key_and_csr(domain)
+    domain_key_pem, csr_pem = _generate_domain_key_and_csr(domain)
 
-    order = acme.new_order(csr_der)
+    order = acme.new_order(csr_pem)
     logger.info("ACME order created for %s", domain)
 
-    for authz in order.authorizations:
-        for chall_body in authz.body.challenges:
+    for authzr in order.authorizations:
+        for chall_body in authzr.body.challenges:
             if not isinstance(chall_body.chall, challenges.HTTP01):
                 continue
             token = chall_body.chall.encode("token")
@@ -115,22 +129,27 @@ def _obtain_sync(
             acme.answer_challenge(chall_body, chall_body.response(account_key))
             logger.info("Answered HTTP-01 challenge for %s", domain)
 
-    deadline = time.monotonic() + 120
-    while time.monotonic() < deadline:
-        order = acme.poll(order)
-        if order.body.status.name in ("valid", "invalid"):
-            break
-        time.sleep(2)
-
-    if order.body.status.name != "valid":
+    deadline = datetime.datetime.now() + datetime.timedelta(seconds=180)
+    try:
+        order = acme.poll_and_finalize(order, deadline)
+    except acme_errors.ValidationError as exc:
+        errors_info = "; ".join(
+            str(authzr.body.status) for authzr in exc.failed_authzrs
+        )
         return CertResult(
             success=False,
             domain=domain,
-            error=f"Order status: {order.body.status.name}",
-            message=f"Certificate order failed: {order.body.status.name}",
+            error=f"Challenge validation failed: {errors_info}",
+            message=f"Certificate order failed: challenge validation error",
+        )
+    except acme_errors.TimeoutError:
+        return CertResult(
+            success=False,
+            domain=domain,
+            error="Timed out waiting for order to become valid",
+            message="Certificate order timed out",
         )
 
-    order = acme.finalize_order(order, deadline=deadline)
     fullchain_pem = order.fullchain_pem.encode() if isinstance(order.fullchain_pem, str) else order.fullchain_pem
 
     os.makedirs(certs_dir, exist_ok=True)
