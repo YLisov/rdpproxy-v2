@@ -200,11 +200,14 @@ if [ "$USE_IMAGE" = true ]; then
     step "$MSG_FETCH"
     mkdir -p "${INSTALL_DIR}/deploy/haproxy"
     ARCHIVE_URL="https://github.com/YLisov/rdpproxy/archive/refs/heads/main.tar.gz"
-    curl -fsSL "$ARCHIVE_URL" | tar -xz --strip-components=1 -C "${INSTALL_DIR}" \
+    TMP_ARCHIVE="$(mktemp)"
+    curl -fsSL "$ARCHIVE_URL" -o "$TMP_ARCHIVE"
+    tar -xzf "$TMP_ARCHIVE" --strip-components=1 -C "${INSTALL_DIR}" \
       rdpproxy-main/docker-compose.yml \
       rdpproxy-main/config.yaml.example \
       rdpproxy-main/.env.example \
       rdpproxy-main/deploy/haproxy/haproxy.cfg
+    rm -f "$TMP_ARCHIVE"
     PROJECT_DIR="${INSTALL_DIR}"
     info "$PROJECT_DIR"
   fi
