@@ -1611,3 +1611,16 @@ docker compose up -d --build rdp-relay
 **Стало**: «Публичный адрес и порт для подключения клиентов. Используются в RDP-файлах, SSL-сертификатах и конфигурации HAProxy»
 
 **Изменённые файлы**: `src/services/admin/templates/admin_settings.html`, `src/services/admin/app.py`, `src/libs/config/settings_manager.py`, `src/services/portal/dependencies.py`, `src/services/portal/templates/login.html`
+
+---
+## Итерация #39
+**Дата**: 2026-04-11
+**Запрос**: Выгрузка на GitHub; синхронизация `project-architecture.md`
+
+### Действие 39.1
+**Описание**: Коммит и `git push origin main` (изменения из итераций #37–#38).
+
+### Действие 39.2
+**Описание**: Обновлён `SuperAgent/Context/project-architecture.md`: дефолт названия портала `RDP-Proxy`, уточнено описание `install.sh` (Docker через файл, создание admin через скрипт в контейнере).
+
+**Изменённые файлы**: `SuperAgent/Context/project-architecture.md`, `SuperAgent/Context/iterations-log.md`

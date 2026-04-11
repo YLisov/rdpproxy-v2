@@ -99,7 +99,7 @@ RDP Relay ─────────────────────► Tar
   - страница входа использует фон `assets/images/ReceiverFullScreenBackground.jpg` с `background-size: cover`, класс `auth-html` на `<html>` и запасной цвет фона; высота вьюпорта через `100dvh` / `-webkit-fill-available` для уменьшения белой полосы на мобильных;
   - после входа портал рендерится на однотонном фоне (`#f9f9f9`) в стиле Citrix Gateway.
 - `app.py`: добавлен mount статики `/assets` через `StaticFiles` для выдачи локальных ассетов портала.
-- `dependencies.py`: добавлен `get_portal_name()` — чтение `portal.name` из `portal_settings` с дефолтом `DC319`.
+- `dependencies.py`: добавлен `get_portal_name()` — чтение `portal.name` из `portal_settings` с дефолтом `RDP-Proxy`.
 - `routes/auth.py` и `routes/servers.py`: в контекст `login.html` прокидывается `portal_name` для динамического `<title>`.
 - `templates/login.html` дополнительно:
   - убрана верхняя серая полоса с текстом `RDP Proxy Portal`;
@@ -174,7 +174,7 @@ RDP Relay ─────────────────────► Tar
 
 - `haproxy/haproxy.cfg`: ingress правила. Секция `resolvers docker` (127.0.0.11) + `resolvers docker init-addr libc,none` на серверах `portal`/`admin`/`rdp-relay` — пересоздание контейнеров не оставляет HAProxy со старым IP (иначе 503). Frontend `ft_mux`: `timeout client 24h` для long-lived RDP; backend `bk_rdp`: `timeout tunnel 24h`, `timeout server 24h`.
 - `haproxy/certs/rdp.pem`: runtime cert bundle (не коммитится).
-- `install.sh`: двуязычный (EN/RU) скрипт-установщик для развёртывания на чистом apt-based Linux. Выполняет: apt update/upgrade, установку Docker, клон репо, интерактивную настройку (домен, node-id, пароли), генерацию секретов, выпуск сертификата (Let's Encrypt или self-signed), sysctl-тюнинг, создание systemd-юнита, сборку и запуск контейнеров, Alembic-миграции, создание admin-пользователя.
+- `install.sh`: двуязычный (EN/RU) скрипт-установщик для развёртывания на чистом apt-based Linux. Выполняет: apt update/upgrade, установку Docker (скрипт get.docker.com сохраняется во временный файл, затем выполняется — без `curl|sh`), клон репо, интерактивную настройку (домен, node-id, пароли), генерацию секретов, выпуск сертификата (Let's Encrypt или self-signed), sysctl-тюнинг, создание systemd-юнита, сборку и запуск контейнеров, Alembic-миграции, создание admin-пользователя (отдельный Python-файл в контейнере + `DB_PASSWORD` в env).
 - `scripts/gen-dev-cert.sh`: dev-сертификат.
 - `scripts/pg-backup.sh`: backup PostgreSQL.
 - `scripts/renew-cert.sh`: сборка LE cert bundle + reload haproxy + restart rdp-relay. Домен определяется из БД (`portal_settings.proxy.public_host`), можно передать аргументом.
