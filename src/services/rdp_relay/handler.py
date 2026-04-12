@@ -238,6 +238,24 @@ class RdpConnectionHandler:
 
             logger.info("RDP session completed (client=%s cid=%s status=%s reason=%s)", client_ip, tracked_cid, fin_status, fin_reason)
 
+        except (asyncio.IncompleteReadError, ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            if tracked_cid is None:
+                logger.debug("Client disconnected early without RDP data (client=%s)", client_ip)
+            else:
+                logger.info("Client disconnected during RDP setup (client=%s, cid=%s)", client_ip, tracked_cid)
+                try:
+                    await self._tracker.finish(
+                        connection_id=tracked_cid,
+                        status="closed",
+                        disconnect_reason="client_disconnect",
+                        bytes_to_client=0,
+                        bytes_to_backend=0,
+                    )
+                    self._sessions.client.delete(keys.CONN_TOKEN.format(connection_id=tracked_cid))
+                except Exception:
+                    logger.exception("Failed to finalize tracked connection %s", tracked_cid)
+            abort_writer(client_writer)
+
         except Exception:
             logger.exception("RDP handling failed (client=%s)", client_ip)
             if tracked_cid is not None:

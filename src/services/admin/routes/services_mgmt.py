@@ -23,7 +23,7 @@ _SERVICE_CHECKS: list[dict[str, Any]] = [
     {"name": "admin", "type": "self"},
     {"name": "portal", "type": "http", "host": "portal", "port": 8001, "path": "/health"},
     {"name": "rdp-relay", "type": "tcp", "host": "rdp-relay", "port": 8002},
-    {"name": "haproxy", "type": "tcp", "host": "haproxy", "port": 443},
+    {"name": "haproxy", "type": "haproxy_stats", "socket": "/var/run/haproxy/admin.sock"},
     {"name": "metrics", "type": "redis_heartbeat"},
 ]
 
@@ -57,6 +57,24 @@ async def _check_http(host: str, port: int, path: str, timeout: float = 2.0) -> 
         return "stopped", 0
 
 
+async def _check_haproxy_stats(socket_path: str, timeout: float = 2.0) -> tuple[str, float]:
+    t0 = time.monotonic()
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_unix_connection(socket_path), timeout=timeout,
+        )
+        writer.write(b"show info\n")
+        await writer.drain()
+        data = await asyncio.wait_for(reader.read(512), timeout=timeout)
+        writer.close()
+        await writer.wait_closed()
+        if b"Uptime" in data:
+            return "running", round((time.monotonic() - t0) * 1000, 1)
+        return "unhealthy", round((time.monotonic() - t0) * 1000, 1)
+    except Exception:
+        return "stopped", 0
+
+
 def _check_redis_heartbeat(request_or_rc: Any) -> tuple[str, float]:
     """Check if metrics collector recently wrote a heartbeat to Redis."""
     rc = request_or_rc
@@ -77,7 +95,9 @@ async def _check_one(spec: dict[str, Any], redis_client: Any = None) -> dict[str
     if stype == "redis_heartbeat":
         status, latency = _check_redis_heartbeat(redis_client)
         return {"name": spec["name"], "status": status, "latency_ms": latency}
-    if stype == "http":
+    if stype == "haproxy_stats":
+        status, latency = await _check_haproxy_stats(spec.get("socket", "/var/run/haproxy/admin.sock"))
+    elif stype == "http":
         status, latency = await _check_http(spec["host"], spec["port"], spec.get("path", "/"))
     else:
         status, latency = await _check_tcp(spec["host"], spec["port"])

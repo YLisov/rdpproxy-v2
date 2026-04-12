@@ -1959,3 +1959,15 @@ docker compose up -d --build rdp-relay
 ### Действие 57.9
 **Описание**: Переименованы compose-файлы: `docker-compose.yml` (сборка) → `docker-compose.dev.yml`, `docker-compose.image.yml` (образы Hub) → `docker-compose.yml`. Теперь основной файл — с готовыми образами, пользователям достаточно `docker compose up -d`. Обновлены все ссылки в `install.sh` (systemd unit, COMPOSE_CMD, финальное сообщение), `README.md`, `.env.example`, `project-architecture.md`. Добавлен комментарий-заголовок в `docker-compose.dev.yml`.
 **Изменённые файлы**: `docker-compose.yml` (бывший image), `docker-compose.dev.yml` (бывший yml), `deploy/install.sh`, `README.md`, `.env.example`, `project-architecture.md`
+
+---
+## Итерация #58
+**Запрос**: Устранить спам ERROR/WARNING в логах rdp-relay и haproxy, вызванный health-check из admin-дашборда
+
+### Действие 58.1
+**Описание**: В `handler.py` добавлен отдельный `except` для `IncompleteReadError`, `ConnectionResetError`, `ConnectionAbortedError`, `BrokenPipeError` перед общим `except Exception`. «Пустые» TCP-подключения (health-check, сканеры) без RDP-данных теперь логируются на уровне DEBUG (если сессия не начата) или INFO (если tracked_cid уже существует), а не ERROR с полным traceback. Корректная финализация tracked-соединения при раннем отключении.
+**Изменённые файлы**: `src/services/rdp_relay/handler.py`
+
+### Действие 58.2
+**Описание**: В `services_mgmt.py` заменён health-check HAProxy с TCP-подключения к порту 443 на проверку через Unix stats socket (`/var/run/haproxy/admin.sock`, команда `show info`). Это устраняет «Connection closed during SSL handshake» в логах haproxy, так как admin больше не открывает «голые» TCP-соединения к мультиплексору порта 443. Добавлена функция `_check_haproxy_stats` и новый тип `haproxy_stats` в `_check_one`.
+**Изменённые файлы**: `src/services/admin/routes/services_mgmt.py`
