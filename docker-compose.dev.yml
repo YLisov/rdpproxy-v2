@@ -2,6 +2,14 @@
 # Для продакшена / пользователей используйте docker-compose.yml (готовые образы Docker Hub).
 #
 # Запуск: docker compose -f docker-compose.dev.yml up -d
+#
+# Ротация логов контейнеров (json-file): ограничение роста docker logs на диске.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
 
 services:
   postgres:
@@ -24,6 +32,7 @@ services:
         limits:
           memory: 512M
           cpus: '1.0'
+    logging: *default-logging
     restart: unless-stopped
 
   redis:
@@ -43,6 +52,7 @@ services:
         limits:
           memory: 256M
           cpus: '0.5'
+    logging: *default-logging
     restart: unless-stopped
 
   haproxy:
@@ -66,6 +76,7 @@ services:
         limits:
           memory: 256M
           cpus: '1.0'
+    logging: *default-logging
     restart: unless-stopped
 
   portal:
@@ -91,6 +102,7 @@ services:
         limits:
           memory: 512M
           cpus: '1.0'
+    logging: *default-logging
     restart: unless-stopped
 
   rdp-relay:
@@ -117,6 +129,7 @@ services:
         limits:
           memory: 1G
           cpus: '2.0'
+    logging: *default-logging
     restart: unless-stopped
 
   admin:
@@ -148,6 +161,7 @@ services:
         limits:
           memory: 512M
           cpus: '1.0'
+    logging: *default-logging
     restart: unless-stopped
 
   metrics:
@@ -168,6 +182,7 @@ services:
         limits:
           memory: 256M
           cpus: '0.5'
+    logging: *default-logging
     restart: unless-stopped
 
 volumes:

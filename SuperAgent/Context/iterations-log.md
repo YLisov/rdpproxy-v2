@@ -1971,3 +1971,11 @@ docker compose up -d --build rdp-relay
 ### Действие 58.2
 **Описание**: В `services_mgmt.py` заменён health-check HAProxy с TCP-подключения к порту 443 на проверку через Unix stats socket (`/var/run/haproxy/admin.sock`, команда `show info`). Это устраняет «Connection closed during SSL handshake» в логах haproxy, так как admin больше не открывает «голые» TCP-соединения к мультиплексору порта 443. Добавлена функция `_check_haproxy_stats` и новый тип `haproxy_stats` в `_check_one`.
 **Изменённые файлы**: `src/services/admin/routes/services_mgmt.py`
+
+---
+## Итерация #59
+**Запрос**: Настроить логирование в docker-compose, защита сервера от переполнения логами
+
+### Действие 59.1
+**Описание**: В `docker-compose.yml` и `docker-compose.dev.yml` добавлен якорь `x-logging` (`json-file`, `max-size: 10m`, `max-file: 5`) и `logging: *default-logging` у всех сервисов (postgres, redis, haproxy, portal, rdp-relay, admin, metrics). Ротация выполняется драйвером Docker, без logrotate внутри контейнеров.
+**Изменённые файлы**: `docker-compose.yml`, `docker-compose.dev.yml`, `SuperAgent/Context/project-architecture.md`

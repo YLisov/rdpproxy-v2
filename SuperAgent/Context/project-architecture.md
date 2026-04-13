@@ -60,8 +60,8 @@ RDP Relay ─────────────────────► Tar
 
 Примечание по сборке контейнеров:
 - `Dockerfile` включает `COPY assets/ ./assets/`, чтобы статические ассеты (например фон логина) были доступны внутри `portal` контейнера по пути `/app/assets`.
-- `docker-compose.yml` — основной стек, использует `image: dc319/rdpproxy:${RDPPROXY_IMAGE_TAG:-latest}` (готовые образы Docker Hub).
-- `docker-compose.dev.yml` — для разработки, использует `build: .` (сборка из исходников).
+- `docker-compose.yml` — основной стек, использует `image: dc319/rdpproxy:${RDPPROXY_IMAGE_TAG:-latest}` (готовые образы Docker Hub). У всех сервисов задано `logging` (якорь `x-logging`): драйвер `json-file`, `max-size: 10m`, `max-file: 5` — ротация логов контейнеров, защита диска от неограниченного роста `docker logs`.
+- `docker-compose.dev.yml` — для разработки, использует `build: .` (сборка из исходников); те же настройки `logging`, что и в основном compose.
 - `deploy/install.sh` — по умолчанию ставит с готовыми образами; `--build` включает сборку из исходников.
 - `deploy/docker-push.sh [TAG]` — ручная сборка и публикация на Docker Hub.
 - `.github/workflows/docker-hub-publish.yml` — CI: push тега `v*` или ручной запуск → build+push на Docker Hub.
